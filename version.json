@@ -1,14 +1,15 @@
 {
   "appName": "ConfereFiscal",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "channel": "stable",
   "releaseDate": "2026-11-08",
   "repository": "junin1737/conferefiscal",
   "repositoryUrl": "https://github.com/junin1737/conferefiscal",
   "branch": "main",
   "installerAssetName": "Instalador_ConfereFiscal_Setup.exe",
-  "portableAssetName": "ConfereFiscal_Portatil_v1.2.2.zip",
+  "portableAssetName": "ConfereFiscal_Portatil_v1.2.3.zip",
   "changelog": [
+    "v1.2.3 - Copiar chaves, exportar tela atual e filtro de notas sem XML",
     "v1.2.2 - Diferenças mostram só notas com problema",
     "v1.2.1 - Versão web removida; aplicativo somente local",
     "v1.2.0 - Leitura do relatório de vendas em PDF do Clipp corrigida (confere com os totais do rodapé)",
@@ -21,6 +22,11 @@
     "v1.0.0 - Lançamento inicial do Dashboard Executivo de Conciliação e Auditoria Fiscal (NF-e 55 / NFC-e 65 / Firebird / XML / PDF)"
   ],
   "history": [
+    {
+      "version": "1.2.3",
+      "date": "2026-11-08",
+      "summary": "Copiar chaves, exportar tela atual e filtro de notas sem XML"
+    },
     {
       "version": "1.2.2",
       "date": "2026-11-08",
