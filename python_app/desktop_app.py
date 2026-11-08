@@ -1,5 +1,6 @@
 import os
 import re
+import unicodedata
 import traceback
 import threading
 import tkinter as tk
@@ -27,6 +28,7 @@ from python_app.reconciliation_engine import (
     generate_xlsx_export_bytes,
     generate_pdf_export_bytes,
 )
+from python_app.grid_export import build_xlsx, build_pdf
 from python_app.version_manager import (
     get_installed_version_info,
     check_published_version,
@@ -291,6 +293,8 @@ class ConfereFiscalDesktopApp:
         self.var_matrix_filter = tk.StringVar(value="ALL")
         self.var_matrix_search = tk.StringVar(value="")
         self.var_events_filter = tk.StringVar(value="ALL")
+        self.var_d1_filter = tk.StringVar(value="ALL")
+        self.model_active_sub: Dict[str, str] = {"55": "docs", "65": "docs"}
         self.var_search_55 = tk.StringVar(value="")
         self.var_search_65 = tk.StringVar(value="")
 
@@ -301,6 +305,7 @@ class ConfereFiscalDesktopApp:
 
         self._configure_ttk_styles()
         self._build_main_layout()
+        self._enable_copy_on_all_grids()
 
         # Inicializa na tela com todos os valores ZERADOS e importação bloqueada até aplicar o período
         self.refresh_all_views()
@@ -818,26 +823,43 @@ class ConfereFiscalDesktopApp:
         d1_outer, d1_inner = self._create_surface_card(parent, padx=12, pady=10)
         d1_outer.pack(fill="both", expand=True)
 
+        d1_head = tk.Frame(d1_inner, bg=PALETTE["card_bg"])
+        d1_head.pack(fill="x", pady=(0, 6))
         self.lbl_d1_header = tk.Label(
-            d1_inner,
-            text="Notas autorizadas em outro dia que não batem na comparação",
+            d1_head,
+            text="Notas autorizadas em outro dia",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
         )
-        self.lbl_d1_header.pack(anchor="w", pady=(0, 8))
+        self.lbl_d1_header.pack(side="left")
+        d1_filters = tk.Frame(d1_inner, bg=PALETTE["card_bg"])
+        d1_filters.pack(fill="x", pady=(0, 8))
+        tk.Label(d1_filters, text="Mostrar:", bg=PALETTE["card_bg"], fg=PALETTE["text_muted"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
+        for lbl, val in (("Todas", "ALL"), ("Faltam XML", "SEM_XML"), ("Fora do relatório", "SEM_RELATORIO"),
+                         ("Com alguma diferença", "PROBLEMA")):
+            tk.Radiobutton(
+                d1_filters, text=lbl, variable=self.var_d1_filter, value=val, bg=PALETTE["card_bg"],
+                fg=PALETTE["text_primary"], selectcolor="#f1f5f9", activebackground=PALETTE["card_bg"],
+                font=("Segoe UI", 9), command=self._populate_d1_tree,
+            ).pack(side="left", padx=6)
+        tk.Label(d1_filters, text="Dica: clique com o botão direito para copiar a chave de acesso",
+                 bg=PALETTE["card_bg"], fg=PALETTE["text_muted"], font=("Segoe UI", 8)).pack(side="right")
 
-        cols_d1 = ("nf_numero", "nf_modelo", "nf_serie", "id_nfe", "dt_emissao", "data_hora_sefaz", "status_des", "valor")
+        cols_d1 = ("nf_numero", "nf_modelo", "nf_serie", "id_nfe", "dt_emissao", "data_hora_sefaz", "tem_xml", "no_rel", "problema", "valor")
         self.tree_d1 = ttk.Treeview(d1_inner, columns=cols_d1, show="headings", height=12, style="Executive.Treeview")
         for c, lbl, w, anc in [
-            ("nf_numero", "Nº da nota", 95, "center"),
-            ("nf_modelo", "Modelo", 65, "center"),
-            ("nf_serie", "Série", 55, "center"),
-            ("id_nfe", "Chave de acesso", 315, "w"),
-            ("dt_emissao", "Emissão", 100, "center"),
-            ("data_hora_sefaz", "Autorização", 150, "center"),
-            ("status_des", "O que aconteceu", 260, "w"),
-            ("valor", "Valor", 110, "e"),
+            ("nf_numero", "Nº da nota", 80, "center"),
+            ("nf_modelo", "Modelo", 55, "center"),
+            ("nf_serie", "Série", 45, "center"),
+            ("id_nfe", "Chave de acesso", 310, "w"),
+            ("dt_emissao", "Emissão", 90, "center"),
+            ("data_hora_sefaz", "Autorização", 135, "center"),
+            ("tem_xml", "Tem XML?", 75, "center"),
+            ("no_rel", "No relatório?", 90, "center"),
+            ("problema", "O que não bate", 240, "w"),
+            ("valor", "Valor", 95, "e"),
         ]:
             self.tree_d1.heading(c, text=lbl)
             self.tree_d1.column(c, width=w, anchor=anc)
@@ -882,6 +904,7 @@ class ConfereFiscalDesktopApp:
         ]
 
         def _switch_sub(sub_key: str) -> None:
+            self.model_active_sub[model_code] = sub_key
             for sk, sf in sub_frames.items():
                 if sk == sub_key:
                     sf.pack(fill="both", expand=True)
@@ -1766,17 +1789,46 @@ class ConfereFiscalDesktopApp:
                 tags=(tag,),
             )
 
+        self._populate_d1_tree()
+
+    def _populate_d1_tree(self) -> None:
+        """Notas emitidas num dia e autorizadas em outro, com filtro (todas / faltam XML / fora do relatório)."""
         for i in self.tree_d1.get_children():
             self.tree_d1.delete(i)
-        d1_list = self.audit_dashboard.get("dPlus1Problems") or []
-        d1_total = len(self.audit_dashboard.get("dPlus1Records") or [])
-        self.lbl_d1_header.config(
-            text=(f"Notas autorizadas em outro dia que não batem na comparação: {len(d1_list)}"
-                  f"   (de {d1_total} autorizadas em data diferente da emissão)"
-                  if (self.xml_documents or self.pdf_records)
-                  else f"Notas autorizadas em outro dia: importe os XMLs ou o relatório para ver quais não batem ({d1_total} no banco)")
-        )
-        for idx, d in enumerate(d1_list[:500]):
+        if not self.audit_dashboard:
+            return
+        todas = self.audit_dashboard.get("dPlus1Records") or []
+        filtro = self.var_d1_filter.get()
+        tem_xml_carregado = bool(self.xml_documents)
+        tem_pdf_carregado = bool(self.pdf_records)
+        if filtro == "SEM_XML":
+            lista = [d for d in todas if not d.get("tem_xml")]
+        elif filtro == "SEM_RELATORIO":
+            lista = [d for d in todas if not d.get("no_relatorio")]
+        elif filtro == "PROBLEMA":
+            lista = [d for d in todas if d.get("problema")]
+        else:
+            lista = list(todas)
+        sem_xml = sum(1 for d in todas if not d.get("tem_xml"))
+        info = f"Notas autorizadas em outro dia: {len(todas)}"
+        if tem_xml_carregado:
+            info += f"   •   sem XML: {sem_xml}"
+        else:
+            info += "   •   XMLs ainda não importados"
+        if filtro != "ALL":
+            info += f"   •   mostrando {len(lista)}"
+        self.lbl_d1_header.config(text=info)
+        lista.sort(key=lambda d: (str(d.get("dt_emissao") or ""), str(d.get("nf_modelo")), str(d.get("nf_numero")).zfill(9)))
+        for idx, d in enumerate(lista):
+            if tem_xml_carregado:
+                xml_txt = "✓ Sim" if d.get("tem_xml") else "✗ Não"
+            else:
+                xml_txt = "—"
+            if tem_pdf_carregado:
+                rel_txt = "✓ Sim" if d.get("no_relatorio") else "✗ Não"
+            else:
+                rel_txt = "—"
+            falta = (tem_xml_carregado and not d.get("tem_xml")) or (tem_pdf_carregado and not d.get("no_relatorio"))
             self.tree_d1.insert(
                 "",
                 "end",
@@ -1784,13 +1836,15 @@ class ConfereFiscalDesktopApp:
                     d.get("nf_numero", "—"),
                     d.get("nf_modelo", "—"),
                     d.get("nf_serie", "1"),
-                    d.get("id_nfe", "—"),
+                    d.get("id_nfe") or "(sem chave de acesso)",
                     _fmt_date_br(d.get("dt_emissao")),
                     _fmt_datetime_br(d.get("data_hora_sefaz")),
-                    str(d.get("origem_falha", "—")).split("  •  emitida")[0],
+                    xml_txt,
+                    rel_txt,
+                    d.get("problema") or "",
                     _fmt_brl(d.get("valor")),
                 ),
-                tags=("warn" if idx % 2 == 0 else "odd",),
+                tags=("err" if (falta or d.get("problema")) else ("even" if idx % 2 == 0 else "odd"),),
             )
 
     def _populate_model_tab(self, model_code: str, db_audit_data: Dict[str, Any]) -> None:
@@ -2054,48 +2108,189 @@ class ConfereFiscalDesktopApp:
             "period": f"{self.var_dt_inicio.get() or 'Início'} a {self.var_dt_fim.get() or 'Fim'}",
         }
 
-    def export_xlsx_dialog(self) -> None:
+    def _current_screen_export(self) -> Tuple[str, List[Tuple[str, List[str], List[List[str]]]]]:
+        """Título e tabelas da tela aberta agora, exatamente como estão (com o filtro aplicado)."""
+
+        def grid(tree: ttk.Treeview) -> Tuple[List[str], List[List[str]]]:
+            cols = list(tree["columns"])
+            headers = [tree.heading(c)["text"] for c in cols]
+            rows = [[str(v) for v in tree.item(i)["values"]] for i in tree.get_children()]
+            return headers, rows
+
+        def radio_label(var: tk.StringVar, options: List[Tuple[str, str]]) -> str:
+            return next((lbl for lbl, val in options if val == var.get()), "Todas")
+
+        tab = self.active_tab_key
+        if tab == "overview":
+            filtro = radio_label(self.var_d1_filter, [("Todas", "ALL"), ("Faltam XML", "SEM_XML"),
+                                                      ("Fora do relatório", "SEM_RELATORIO"),
+                                                      ("Com alguma diferença", "PROBLEMA")])
+            return "Resumo", [
+                ("Totais por tipo de nota", *grid(self.tree_triple)),
+                (f"Notas autorizadas em outro dia — {filtro}", *grid(self.tree_d1)),
+            ]
+        if tab == "divergences":
+            filtro = radio_label(self.var_matrix_filter, [
+                ("Todas", "ALL"), ("Falta no banco", "FALTA_BANCO"), ("Falta no relatório", "FALTA_RELATORIO"),
+                ("Falta o XML", "FALTA_XML"), ("Valor diferente", "DIVERGENCIA_VALOR"),
+                ("Sem chave de acesso", "CHAVE_INVALIDA_OU_AUSENTE"), ("Autorizada em outro dia", "DIVERGENCIA_D_MAIS_1")])
+            return f"Diferenças — {filtro}", [(f"Diferenças — {filtro}", *grid(self.tree_matrix))]
+        if tab in ("nfe55", "nfce65"):
+            mc = "55" if tab == "nfe55" else "65"
+            nome = "NF-e (modelo 55)" if mc == "55" else "NFC-e (modelo 65)"
+            sub = self.model_active_sub.get(mc, "docs")
+            tree = {"docs": "tree_docs_", "cfop": "tree_cfop_", "ncm": "tree_ncm_"}[sub] + mc
+            sub_nome = {"docs": "Lista de notas", "cfop": "Totais por CFOP", "ncm": "Totais por NCM"}[sub]
+            return f"{nome} — {sub_nome}", [(f"{nome} — {sub_nome}", *grid(getattr(self, tree)))]
+        if tab == "events":
+            filtro = radio_label(self.var_events_filter, [("Todas", "ALL"), ("Canceladas", "101"), ("Inutilizadas", "102")])
+            return f"Canceladas e inutilizadas — {filtro}", [(f"Canceladas e inutilizadas — {filtro}", *grid(self.tree_events))]
+        return "ConfereFiscal", []
+
+    def _export_meta(self) -> List[str]:
+        base = "data de autorização" if self.var_date_base.get() == "authDate" else "data de emissão"
+        linhas = [f"Período: {self.var_dt_inicio.get()} até {self.var_dt_fim.get()}  (comparando pela {base})"]
+        if self.var_db_path.get():
+            linhas.append(f"Banco: {self.var_db_path.get()}")
+        if self.loaded_archive_names:
+            linhas.append(f"XMLs: {', '.join(self.loaded_archive_names)}")
+        if self.pdf_last_name:
+            linhas.append(f"Relatório PDF: {self.pdf_last_name}")
+        return linhas
+
+    def _export_current_screen(self, kind: str) -> None:
         if not self.period_filter_applied or not self.reconciliation_result:
             self._warn_period_required()
             return
+        title, sections = self._current_screen_export()
+        if not sections:
+            return
+        slug = re.sub(r"[^a-z0-9]+", "_", unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower()).strip("_")
+        ext = ".xlsx" if kind == "xlsx" else ".pdf"
         path = filedialog.asksaveasfilename(
             initialdir=self.last_browse_dir,
-            title="Salvar resultado em Excel",
-            defaultextension=".xlsx",
-            initialfile="conferencia_vendas.xlsx",
-            filetypes=[("Planilha Excel (*.xlsx)", "*.xlsx")],
+            title=f"Salvar '{title}' em {'Excel' if kind == 'xlsx' else 'PDF'}",
+            defaultextension=ext,
+            initialfile=f"{slug}{ext}",
+            filetypes=[("Planilha Excel (*.xlsx)", "*.xlsx")] if kind == "xlsx" else [("Arquivo PDF (*.pdf)", "*.pdf")],
         )
         if not path:
             return
-        data = generate_xlsx_export_bytes(
-            self.reconciliation_result["items"],
-            self.reconciliation_result["summary"],
-            self.audit_dashboard,
-        )
-        Path(path).write_bytes(data)
-        messagebox.showinfo("Excel salvo", f"Arquivo salvo em:\n{path}")
+        builder = build_xlsx if kind == "xlsx" else build_pdf
+        try:
+            Path(path).write_bytes(builder(f"ConfereFiscal — {title}", self._export_meta(), sections))
+        except PermissionError:
+            messagebox.showerror("Não foi possível salvar", f"O arquivo está aberto em outro programa?\n{path}")
+            return
+        self.last_browse_dir = str(Path(path).parent)
+        total = sum(len(rows) for _t, _h, rows in sections)
+        messagebox.showinfo("Arquivo salvo", f"'{title}' ({total} linhas) salvo em:\n{path}")
+
+    def export_xlsx_dialog(self) -> None:
+        self._export_current_screen("xlsx")
 
     def export_pdf_dialog(self) -> None:
-        if not self.period_filter_applied or not self.reconciliation_result:
-            self._warn_period_required()
+        self._export_current_screen("pdf")
+
+    # =========================================================================
+    # COPIAR DADOS DAS TABELAS (Ctrl+C, duplo clique e botão direito)
+    # =========================================================================
+
+    def _enable_copy_on_all_grids(self) -> None:
+        for name in ("tree_triple", "tree_d1", "tree_cfop_55", "tree_ncm_55", "tree_docs_55",
+                     "tree_cfop_65", "tree_ncm_65", "tree_docs_65", "tree_events", "tree_matrix"):
+            tree = getattr(self, name, None)
+            if tree is None:
+                continue
+            tree.configure(selectmode="extended")
+            tree.bind("<Control-c>", lambda e, t=tree: self._copy_rows(t, selected=True))
+            tree.bind("<Control-C>", lambda e, t=tree: self._copy_rows(t, selected=True))
+            tree.bind("<Double-1>", lambda e, t=tree: self._copy_cell(t, e))
+            tree.bind("<Button-3>", lambda e, t=tree: self._grid_menu(t, e))
+
+    def _to_clipboard(self, text: str, aviso: str) -> None:
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
+        self._toast(aviso)
+
+    def _toast(self, msg: str) -> None:
+        lbl = getattr(self, "_toast_lbl", None)
+        if lbl is None:
+            lbl = tk.Label(self.root, bg="#0f172a", fg="#ffffff", font=("Segoe UI", 9, "bold"), padx=14, pady=7)
+            self._toast_lbl = lbl
+        lbl.configure(text=msg)
+        lbl.place(relx=0.5, rely=1.0, y=-24, anchor="s")
+        lbl.lift()
+        if getattr(self, "_toast_job", None):
+            self.root.after_cancel(self._toast_job)
+        self._toast_job = self.root.after(1800, lbl.place_forget)
+
+    def _col_values(self, tree: ttk.Treeview, col: str, items: List[str]) -> List[str]:
+        cols = list(tree["columns"])
+        idx = cols.index(col)
+        out = []
+        for i in items:
+            vals = tree.item(i)["values"]
+            if idx < len(vals):
+                v = str(vals[idx])
+                if v and not v.startswith("("):
+                    out.append(v)
+        return out
+
+    def _copy_rows(self, tree: ttk.Treeview, selected: bool = True, header: bool = False) -> str:
+        items = list(tree.selection()) if selected else list(tree.get_children())
+        if not items:
+            self._toast("Selecione uma ou mais linhas")
+            return "break"
+        lines = []
+        if header:
+            lines.append("\t".join(tree.heading(c)["text"] for c in tree["columns"]))
+        lines += ["\t".join(str(v) for v in tree.item(i)["values"]) for i in items]
+        self._to_clipboard("\n".join(lines), f"{len(items)} linha(s) copiada(s)")
+        return "break"
+
+    def _copy_cell(self, tree: ttk.Treeview, event: Any) -> None:
+        row = tree.identify_row(event.y)
+        col = tree.identify_column(event.x)
+        if not row or not col:
             return
-        path = filedialog.asksaveasfilename(
-            initialdir=self.last_browse_dir,
-            title="Salvar resultado em PDF",
-            defaultextension=".pdf",
-            initialfile="conferencia_vendas.pdf",
-            filetypes=[("Relatório PDF (*.pdf)", "*.pdf")],
-        )
-        if not path:
-            return
-        data = generate_pdf_export_bytes(
-            self.reconciliation_result["items"],
-            self.reconciliation_result["summary"],
-            self._build_export_metadata(),
-            self.audit_dashboard,
-        )
-        Path(path).write_bytes(data)
-        messagebox.showinfo("PDF salvo", f"Arquivo salvo em:\n{path}")
+        idx = int(col.replace("#", "")) - 1
+        vals = tree.item(row)["values"]
+        if 0 <= idx < len(vals):
+            self._to_clipboard(str(vals[idx]), f"Copiado: {vals[idx]}")
+
+    def _grid_menu(self, tree: ttk.Treeview, event: Any) -> None:
+        row = tree.identify_row(event.y)
+        col = tree.identify_column(event.x)
+        if row and row not in tree.selection():
+            tree.selection_set(row)
+        menu = tk.Menu(self.root, tearoff=0, font=("Segoe UI", 9))
+        cols = list(tree["columns"])
+        if row and col:
+            idx = int(col.replace("#", "")) - 1
+            vals = tree.item(row)["values"]
+            if 0 <= idx < len(vals):
+                valor = str(vals[idx])
+                rotulo = valor if len(valor) <= 50 else valor[:47] + "..."
+                menu.add_command(label=f"Copiar  “{rotulo}”", command=lambda v=valor: self._to_clipboard(v, f"Copiado: {v}"))
+        if "id_nfe" in cols:
+            def _keys(sel: bool) -> None:
+                items = list(tree.selection()) if sel else list(tree.get_children())
+                chaves = self._col_values(tree, "id_nfe", items)
+                if chaves:
+                    self._to_clipboard("\n".join(chaves), f"{len(chaves)} chave(s) de acesso copiada(s)")
+                else:
+                    self._toast("Nenhuma chave de acesso nas linhas")
+            menu.add_command(label="Copiar chave de acesso (linhas selecionadas)", command=lambda: _keys(True))
+            menu.add_command(label="Copiar todas as chaves desta tela", command=lambda: _keys(False))
+        menu.add_separator()
+        menu.add_command(label="Copiar linhas selecionadas", command=lambda: self._copy_rows(tree, True))
+        menu.add_command(label="Copiar tabela inteira (com cabeçalho)", command=lambda: self._copy_rows(tree, False, header=True))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     # =========================================================================
     # CONTROLE DE VERSÃO E ATUALIZAÇÃO AUTOMÁTICA (GITHUB junin1737/conferefiscal)

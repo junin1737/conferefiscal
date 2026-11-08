@@ -917,6 +917,18 @@ def build_audit_dashboard_report(
                 d1_seen.add(ident)
                 d1_problems.append(r)
 
+    # Marca em TODAS as notas autorizadas em outro dia se têm XML, se estão no relatório e o que não bate
+    problem_by_ident = {}
+    for r in divergence_matrix:
+        ident = r["id_nfe"] if len(str(r["id_nfe"])) == 44 else f"{r['nf_modelo']}|{r['nf_numero']}"
+        problem_by_ident.setdefault(ident, []).append(r["origem_falha"].split("  •  emitida")[0])
+    for d in d_plus_1_records:
+        k_d, m_d, n_d = d["id_nfe"], d["nf_modelo"], d["nf_numero"]
+        d["tem_xml"] = _find(xml_all_by_key, xml_all_by_mod_num, k_d, m_d, n_d) is not None
+        d["no_relatorio"] = _find(pdf_all_by_key, pdf_all_by_mod_num, k_d, m_d, n_d) is not None
+        ident = k_d if len(k_d) == 44 else f"{m_d}|{n_d}"
+        d["problema"] = "; ".join(problem_by_ident.get(ident, []))
+
     def _count(code: str) -> int:
         return sum(1 for r in divergence_matrix if code in r["codigos"])
 
