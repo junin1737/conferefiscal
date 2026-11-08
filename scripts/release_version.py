@@ -42,14 +42,14 @@ def main() -> None:
 
     updated = bump_project_version(bump_type=bump_type, changelog_note=note)
     new_ver = updated["version"]
-    print(f"[OK] Versão atualizada para v{new_ver} em version.json, python_app/__init__.py e package.json.")
+    print(f"[OK] Versão atualizada para v{new_ver} em version.json e python_app/__init__.py.")
 
     if "--build" in flags:
         print("[..] Recompilando instalador Windows (scripts/build_installer.py)...")
         subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "build_installer.py")], cwd=str(ROOT_DIR), check=True)
 
     if (ROOT_DIR / ".git").exists():
-        subprocess.run(["git", "add", "version.json", "python_app/__init__.py", "package.json"], cwd=str(ROOT_DIR), check=False)
+        subprocess.run(["git", "add", "version.json", "python_app/__init__.py"], cwd=str(ROOT_DIR), check=False)
         subprocess.run(["git", "commit", "-m", f"chore(release): v{new_ver} - {note}"], cwd=str(ROOT_DIR), check=False)
         subprocess.run(["git", "tag", "-f", f"v{new_ver}"], cwd=str(ROOT_DIR), check=False)
         print(f"[OK] Commit e tag git 'v{new_ver}' criados localmente.")

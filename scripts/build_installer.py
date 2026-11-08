@@ -280,8 +280,7 @@ def build_launchers_and_uninstaller(stage_dir: Path, icon_path: Path, manifest_p
     """
     Compila os executáveis nativos que ficam dentro da pasta instalada:
       1. ConfereFiscal.exe (Abre o Dashboard Desktop Python com suporte Win 7/8/8.1/10/11)
-      2. ConfereFiscal_Web.exe (Inicia o Dashboard Web Local na porta 5000 e abre o navegador)
-      3. Desinstalar_ConfereFiscal.exe (Remove atalhos, registro e arquivos da instalação)
+      2. Desinstalar_ConfereFiscal.exe (Remove atalhos, registro e arquivos da instalação)
     """
     desktop_launcher_cs = r"""
 using System;
@@ -342,66 +341,6 @@ namespace ConfereFiscalLauncher {
         references=["System.dll", "System.Windows.Forms.dll"],
     )
 
-    web_launcher_cs = r"""
-using System;
-using System.IO;
-using System.Diagnostics;
-using System.Threading;
-using System.Windows.Forms;
-
-namespace ConfereFiscalWebLauncher {
-    static class Program {
-        [STAThread]
-        static void Main(string[] args) {
-            string appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/');
-            string runtimeDir = Path.Combine(appDir, "runtime");
-            string pyExe = Path.Combine(runtimeDir, "python.exe");
-
-            if (!File.Exists(pyExe)) {
-                MessageBox.Show(
-                    "Runtime Python embutido não encontrado em:\n" + pyExe,
-                    "ConfereFiscal Web - Erro",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error
-                );
-                return;
-            }
-
-            ProcessStartInfo psi = new ProcessStartInfo();
-            psi.FileName = pyExe;
-            psi.Arguments = "-m python_app.web_server";
-            psi.WorkingDirectory = appDir;
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = false;
-            psi.EnvironmentVariables["PYTHONPATH"] = appDir;
-            psi.EnvironmentVariables["PYTHONNOUSERSITE"] = "1";
-
-            string oldPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-            string extraPath = runtimeDir + ";" + Path.Combine(runtimeDir, "DLLs") + ";" + Path.Combine(runtimeDir, "firebird_5_0") + ";" + Path.Combine(runtimeDir, "firebird_2_5");
-            psi.EnvironmentVariables["PATH"] = extraPath + ";" + oldPath;
-
-            try {
-                Process proc = Process.Start(psi);
-                Thread.Sleep(900);
-                Process.Start("http://127.0.0.1:5000");
-                if (proc != null) {
-                    proc.WaitForExit();
-                }
-            } catch (Exception ex) {
-                MessageBox.Show("Falha ao iniciar Servidor Web ConfereFiscal:\n" + ex.Message, "ConfereFiscal Web", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-    }
-}
-"""
-    compile_csharp(
-        web_launcher_cs,
-        stage_dir / "ConfereFiscal_Web.exe",
-        icon_path,
-        manifest_path,
-        winexe=False,
-        references=["System.dll", "System.Windows.Forms.dll"],
-    )
 
     uninstaller_cs = r"""
 using System;
@@ -596,7 +535,7 @@ def stage_application_files(stage_dir: Path, icon_path: Path, manifest_path: Pat
     print("  [1/5] Empacotando runtime Python + UCRT/VC++ (Win 7/8/8.1/10/11) + Drivers Firebird 2.5/5.0...")
     copy_portable_python_runtime(stage_dir / "runtime")
 
-    print("  [2/5] Copiando módulos python_app, interface web, ícone e exemplos...")
+    print("  [2/5] Copiando módulos python_app, ícone e exemplos...")
     shutil.copytree(
         ROOT_DIR / "python_app",
         stage_dir / "python_app",
@@ -604,7 +543,6 @@ def stage_application_files(stage_dir: Path, icon_path: Path, manifest_path: Pat
         dirs_exist_ok=True,
     )
 
-    shutil.copytree(ROOT_DIR / "src" / "public", stage_dir / "src" / "public", dirs_exist_ok=True)
 
     if (ROOT_DIR / "exemplos").exists():
         shutil.copytree(ROOT_DIR / "exemplos", stage_dir / "exemplos", dirs_exist_ok=True)
@@ -630,7 +568,7 @@ def stage_application_files(stage_dir: Path, icon_path: Path, manifest_path: Pat
         (stage_dir / "instalador").mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE_ICON_PNG, stage_dir / "instalador" / "icone.png")
 
-    print("  [3/5] Compilando executáveis nativos (ConfereFiscal.exe, ConfereFiscal_Web.exe, Desinstalar_ConfereFiscal.exe)...")
+    print("  [3/5] Compilando executáveis nativos (ConfereFiscal.exe, Desinstalar_ConfereFiscal.exe)...")
     build_launchers_and_uninstaller(stage_dir, icon_path, manifest_path)
 
 
@@ -743,7 +681,7 @@ namespace ConfereFiscalSetup {
             body.Controls.Add(btnBrowse);
 
             chkDesktopShortcut = new CheckBox();
-            chkDesktopShortcut.Text = "Criar atalhos na Área de Trabalho (ConfereFiscal Desktop e ConfereFiscal Web)";
+            chkDesktopShortcut.Text = "Criar atalho na Área de Trabalho";
             chkDesktopShortcut.Checked = true;
             chkDesktopShortcut.AutoSize = true;
             chkDesktopShortcut.Location = new Point(16, 78);
@@ -976,6 +914,19 @@ namespace ConfereFiscalSetup {
                 onLog("Banco de dados existente restaurado com sucesso.");
             }
 
+            try {
+                string oldWeb = Path.Combine(targetDir, "ConfereFiscal_Web.exe");
+                if (File.Exists(oldWeb)) File.Delete(oldWeb);
+                string oldSrc = Path.Combine(targetDir, "src");
+                if (Directory.Exists(oldSrc)) Directory.Delete(oldSrc, true);
+                string oldWs = Path.Combine(targetDir, "python_app", "web_server.py");
+                if (File.Exists(oldWs)) File.Delete(oldWs);
+                string oldLnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "ConfereFiscal Web.lnk");
+                if (File.Exists(oldLnk)) File.Delete(oldLnk);
+                string oldMenuLnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "ConfereFiscal", "ConfereFiscal Web.lnk");
+                if (File.Exists(oldMenuLnk)) File.Delete(oldMenuLnk);
+            } catch {}
+
             if (createDesktop) {
                 onProgress(88, "Criando atalhos na Área de Trabalho...");
                 string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -984,13 +935,6 @@ namespace ConfereFiscalSetup {
                     Path.Combine(targetDir, "ConfereFiscal.exe"),
                     targetDir,
                     "ConfereFiscal — Dashboard de Conciliação e Auditoria Fiscal Contábil",
-                    Path.Combine(targetDir, "ConfereFiscal.ico")
-                );
-                CreateShortcut(
-                    Path.Combine(desktopDir, "ConfereFiscal Web.lnk"),
-                    Path.Combine(targetDir, "ConfereFiscal_Web.exe"),
-                    targetDir,
-                    "ConfereFiscal — Dashboard Web Local (Porta 5000)",
                     Path.Combine(targetDir, "ConfereFiscal.ico")
                 );
                 onLog("Atalhos criados na Área de Trabalho.");
@@ -1005,13 +949,6 @@ namespace ConfereFiscalSetup {
                     Path.Combine(targetDir, "ConfereFiscal.exe"),
                     targetDir,
                     "ConfereFiscal — Dashboard de Conciliação e Auditoria Fiscal Contábil",
-                    Path.Combine(targetDir, "ConfereFiscal.ico")
-                );
-                CreateShortcut(
-                    Path.Combine(programsDir, "ConfereFiscal Web.lnk"),
-                    Path.Combine(targetDir, "ConfereFiscal_Web.exe"),
-                    targetDir,
-                    "ConfereFiscal — Dashboard Web Local (Porta 5000)",
                     Path.Combine(targetDir, "ConfereFiscal.ico")
                 );
                 CreateShortcut(

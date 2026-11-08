@@ -2,12 +2,10 @@ import os
 import re
 import traceback
 import threading
-import webbrowser
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from http.server import ThreadingHTTPServer
 
 from python_app.database_manager import (
     LocalDatabaseManager,
@@ -34,7 +32,6 @@ from python_app.version_manager import (
     check_published_version,
     apply_published_update,
 )
-from python_app.web_server import ConfereFiscalPythonHandler
 
 
 # =============================================================================
@@ -129,6 +126,28 @@ def _fmt_datetime_br(raw: Any) -> str:
         t_part = m.group(4)
         return f"{d_br} {t_part}" if t_part and t_part != "00:00:00" else d_br
     return _fmt_date_br(s)
+
+
+def _remove_obsolete_web_files() -> None:
+    """Apaga restos da antiga versão web (o app agora é só local). Silencioso se não existirem."""
+    import shutil
+
+    alvos = [
+        ROOT_DIR / "ConfereFiscal_Web.exe",
+        ROOT_DIR / "iniciar_python_web.bat",
+        ROOT_DIR / "python_app" / "web_server.py",
+        ROOT_DIR / "src",
+    ]
+    for base in (Path.home() / "Desktop", Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "ConfereFiscal"):
+        alvos.append(base / "ConfereFiscal Web.lnk")
+    for alvo in alvos:
+        try:
+            if alvo.is_dir():
+                shutil.rmtree(alvo, ignore_errors=True)
+            elif alvo.exists():
+                alvo.unlink()
+        except Exception:
+            pass
 
 
 class ModernButton(tk.Frame):
@@ -251,7 +270,6 @@ class ConfereFiscalDesktopApp:
         self.audit_dashboard: Optional[Dict[str, Any]] = None
         self.last_db_audit_data: Dict[str, Any] = {}
         self.manual_decisions: Dict[str, Dict[str, Any]] = {}
-        self.web_server_thread: Optional[threading.Thread] = None
 
         desktop_dir = Path.home() / "Desktop"
         self.last_browse_dir: str = str(desktop_dir if desktop_dir.exists() else Path.home())
@@ -286,6 +304,7 @@ class ConfereFiscalDesktopApp:
 
         # Inicializa na tela com todos os valores ZERADOS e importação bloqueada até aplicar o período
         self.refresh_all_views()
+        _remove_obsolete_web_files()
         self._check_updates_in_background()
 
     def _load_window_icon(self) -> None:
@@ -610,10 +629,6 @@ class ConfereFiscalDesktopApp:
         ModernButton(r_exp, text="PDF", command=self.export_pdf_dialog, bg="#1e293b", hover_bg="#334155",
                      fg="#38bdf8", pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", fill="x", expand=True)
 
-        web_link = tk.Label(self.sidebar, text="Abrir versão no navegador", bg=PALETTE["sb_bg"], fg="#475569",
-                            font=("Segoe UI", 8, "underline"), cursor="hand2")
-        web_link.pack(side="bottom", anchor="w")
-        web_link.bind("<Button-1>", lambda _e: self.start_and_open_web_ui())
 
     def _toggle_advanced_db(self) -> None:
         if self.adv_db_frame.winfo_ismapped():
@@ -2079,20 +2094,6 @@ class ConfereFiscalDesktopApp:
         )
         Path(path).write_bytes(data)
         messagebox.showinfo("PDF salvo", f"Arquivo salvo em:\n{path}")
-
-    def start_and_open_web_ui(self) -> None:
-        port = 5000
-        if self.web_server_thread is None or not self.web_server_thread.is_alive():
-            def _serve():
-                try:
-                    httpd = ThreadingHTTPServer(("127.0.0.1", port), ConfereFiscalPythonHandler)
-                    httpd.serve_forever()
-                except OSError:
-                    pass
-
-            self.web_server_thread = threading.Thread(target=_serve, daemon=True)
-            self.web_server_thread.start()
-        webbrowser.open(f"http://127.0.0.1:{port}")
 
     # =========================================================================
     # CONTROLE DE VERSÃO E ATUALIZAÇÃO AUTOMÁTICA (GITHUB junin1737/conferefiscal)

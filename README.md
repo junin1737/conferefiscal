@@ -1,136 +1,80 @@
-# ConfereFiscal — Conciliação e Auditoria Local de Vendas Fiscais
+# ConfereFiscal — Conferência de vendas fiscais
 
-Aplicação web 100% local, em português do Brasil, para **conciliação e auditoria de vendas fiscais** confrontando:
-1. **Arquivos XML de documentos fiscais** (importados via pacotes `.zip`, `.rar` com subpastas ou `.xml` avulsos — NF-e modelo 55, NFC-e modelo 65, CF-e SAT modelo 59, Eventos de Cancelamento `110111` e Inutilizações).
-2. **Relatórios gerenciais/fiscais de vendas em PDF** (com extração tabular, heurística de linhas, mapeamento configurável de colunas, edição manual de prévia e detecção de PDF digitalizado com OCR local).
-3. **Banco de dados Firebird 2.5 (ODS 11.2) ou 5.0 (ODS 13.1)** (com detecção automática de versão, descoberta dinâmica do esquema `RDB$RELATIONS` / `RDB$RELATION_FIELDS`, prévia SQL e execução estritamente `READ ONLY`).
+Aplicativo de computador (Windows), 100% local, para conferir as vendas de um período comparando três fontes:
 
----
+1. **Banco de dados do Clipp** (Firebird 2.5 ou 5.0, arquivo `.FDB`) — leitura somente, sem alterar nada.
+2. **XMLs das notas** (NF-e modelo 55, NFC-e modelo 65), avulsos ou dentro de `.zip` / `.rar`, inclusive com subpastas e eventos de cancelamento.
+3. **Relatório de vendas em PDF** exportado pelo ERP (ex.: "Relatório de Vendas" do Clipp). O total lido é conferido com os totais impressos no rodapé do relatório.
 
-## Instalador Autônomo para Windows (Esta Máquina e Outras Máquinas)
+O resultado mostra o que bate e o que diverge (nota sem XML, XML fora do banco, valor diferente, nota autorizada em outro dia, canceladas etc.) e pode ser salvo em Excel ou PDF.
 
-Na pasta `instalador/` estão disponíveis os pacotes prontos para instalar ou executar o **ConfereFiscal** em **qualquer computador com Windows 10 ou 11**, **sem precisar instalar Python ou Node.js** nas outras máquinas (o runtime Python 3.12 + SQLite3 + Tkinter já vai 100% embutido):
-
-1. **Instalador Gráfico Único (`instalador/Instalador_ConfereFiscal_Setup.exe` — ~13,6 MB)**:
-   - Arquivo `.exe` único e autossuficiente (basta copiar este único arquivo para um pendrive ou pasta de rede e executar em qualquer máquina).
-   - Abre o assistente gráfico de instalação em português, permitindo escolher a pasta de destino (padrão: `%LOCALAPPDATA%\Programs\ConfereFiscal`, sem exigir senha de Administrador), criar atalhos na **Área de Trabalho** e no **Menu Iniciar**, preservar a base local `dados_locais/confere_fiscal_local.db` em atualizações e registrar o desinstalador no Windows.
-   - Instala os executáveis nativos:
-     - `ConfereFiscal.exe` (abre a Interface Desktop Nativa).
-     - `ConfereFiscal_Web.exe` (inicia o Servidor Web Local na porta `5000` e abre o navegador).
-     - `Desinstalar_ConfereFiscal.exe` (remove o aplicativo com opção de manter ou excluir o banco local).
-   - **Instalação Silenciosa (Linha de Comando / TI)**:
-     ```powershell
-     .\instalador\Instalador_ConfereFiscal_Setup.exe /SILENT /DIR="C:\ConfereFiscal"
-     ```
-2. **Pacote Portátil (`instalador/ConfereFiscal_Portatil_v1.0.0.zip` — ~13,6 MB)**:
-   - Basta descompactar em qualquer pasta ou pendrive e dar duplo-clique em `ConfereFiscal.exe` ou `ConfereFiscal_Web.exe`.
-3. **Como regerar o instalador após alterações no código**:
-   ```powershell
-   .\.venv\Scripts\python.exe scripts/build_installer.py
-   ```
+Nenhum arquivo, credencial ou dado sai da máquina. A única conexão externa é a verificação de atualizações no GitHub.
 
 ---
 
-## Requisitos e Execução Local Rápida (Ambiente de Desenvolvimento)
+## Instalar em outro computador
 
-O projeto conta com **duas opções completas de execução 100% local**:
-1. **Aplicação Local em Python (`python_app/`)** — com **Interface Desktop Nativa (Tkinter/TTK)** para trabalhar diretamente com a base de dados local (`dados_locais/confere_fiscal_local.db`), Console SQL somente-leitura, inspetor de arquivos Firebird `.fdb` (2.5 e 5.0), importador de XMLs para o banco e Servidor Web Python na porta `5000`.
-2. **Servidor Web Node.js (`src/server.js`)** — com interface web SPA completa na porta `3000`.
+Na pasta `instalador/` (gerada pelo script de build, não vai para o Git):
 
-### Opção A — Aplicação Local em Python (Desktop GUI + Gerenciador de Base Local + Web)
+- **`Instalador_ConfereFiscal_Setup.exe`** — instalador único. Instala em `%LOCALAPPDATA%\Programs\ConfereFiscal` (não pede senha de administrador), cria atalhos e preserva o banco local em reinstalações. Não precisa ter Python instalado: o runtime vai embutido.
+  - Instalação silenciosa: `Instalador_ConfereFiscal_Setup.exe /SILENT /DIR="C:\ConfereFiscal"`
+- **`ConfereFiscal_Portatil_vX.Y.Z.zip`** — versão portátil: descompacte e abra `ConfereFiscal.exe`.
 
-No diretório raiz do projeto (`c:\Work\Pessoal\Projetos\ConfereFiscal`), utilize o ambiente virtual `.venv` configurado com Python 3.12:
+## Atualização automática
+
+O botão **Verificar atualização** (canto superior direito) consulta o `version.json` do repositório
+[junin1737/conferefiscal](https://github.com/junin1737/conferefiscal). Se a versão publicada for maior que a instalada,
+o app baixa o código novo, faz backup da versão atual (`.local_data/backups/`), instala e reinicia sozinho.
+Os dados locais (`dados_locais/`, `.local_data/`) nunca são alterados.
+
+Ao abrir, o app também confere em segundo plano e avisa no botão quando há versão nova.
+
+### Publicar uma nova versão
 
 ```powershell
-# 1. Iniciar a Interface Desktop Nativa em Python (Gerenciador da Base Local, SQL, Importação e Conciliação)
+.\.venv\Scripts\python.exe scripts/release_version.py patch "Descrição da mudança" --push
+```
+
+Isso aumenta a versão em `version.json` e `python_app/__init__.py`, cria o commit/tag e envia ao GitHub.
+Use `minor` ou `major` para saltos maiores e `--build` para gerar também o instalador.
+
+---
+
+## Desenvolvimento
+
+Requisitos: Python 3.12 (o projeto usa somente a biblioteca padrão; ambiente em `.venv`).
+
+```powershell
+# Abrir o aplicativo
 .\.venv\Scripts\python.exe -m python_app.desktop_app
-# (ou dê duplo-clique em iniciar_python_desktop.bat)
+# (ou duplo-clique em iniciar_python_desktop.bat)
 
-# 2. Iniciar o Servidor Web em Python na porta 5000 (http://127.0.0.1:5000)
-.\.venv\Scripts\python.exe -m python_app.web_server
-# (ou dê duplo-clique em iniciar_python_web.bat)
-
-# 3. Executar a suíte de testes automatizados da aplicação Python
+# Rodar os testes
 .\.venv\Scripts\python.exe -m unittest python_app/test_python_app.py -v
+
+# Gerar instalador e pacote portátil
+.\.venv\Scripts\python.exe scripts/build_installer.py
 ```
 
-#### Recursos para trabalhar com a Base Local na Aplicação Python:
-- **Banco de Dados Local Ativo**: `dados_locais/confere_fiscal_local.db` (esquema compatível com Firebird: tabelas `TB_DOC_FISCAL_SAIDA`, `TB_DOC_FISCAL_ITENS`, `TB_DOC_FISCAL_PAGAMENTOS` e view `VW_RESUMO_CAIXA_PDV`).
-- **Aba 1 — Trabalhar na Base Local**: Pesquise, filtre por situação (`A`, `C`, `D`, `I`), adicione novos documentos fiscais, edite valores/datas/pagamentos/chaves de registros existentes, exclua registros ou restaure as 10 vendas padrão.
-- **Aba 2 — Console SQL & Inspeção Firebird (2.5 / 5.0)**: Execute consultas `SELECT` (incluindo sintaxe Firebird `SELECT FIRST N ...`) sobre as tabelas e views locais e inspecione o cabeçalho binário ODS de qualquer arquivo `.fdb` / `.gdb` (`ODS 11.2` = Firebird 2.5; `ODS 13.1` = Firebird 5.0).
-- **Aba 3 — Importar XMLs (`.zip`/`.rar`/`.xml`) e PDF para a Base Local**: Extraia pacotes compactados com subpastas e sincronize/grave diretamente os documentos fiscais de venda na tabela `TB_DOC_FISCAL_SAIDA` (mesclando ou substituindo os registros existentes).
-- **Aba 4 — Conciliação Fiscal & Exportação**: Confronte `XML × PDF × Base Local` alternando entre Data de Emissão e Data de Autorização, e exporte para `.csv`, `.xlsx` e `.pdf`.
+### Estrutura
 
----
+| Arquivo | Função |
+| :--- | :--- |
+| `python_app/desktop_app.py` | Telas do aplicativo (Tkinter) |
+| `python_app/database_manager.py` | Base local SQLite e leitura do banco Firebird/Clipp |
+| `python_app/fiscal_parsers.py` | Leitura de XMLs, `.zip` e `.rar` |
+| `python_app/pdf_text.py` | Extração de texto de PDF (fontes Identity-H/ToUnicode, sem dependências) |
+| `python_app/pdf_report.py` | Interpretação da tabela de vendas do relatório PDF |
+| `python_app/reconciliation_engine.py` | Cruzamento banco × XML × PDF e exportação Excel/PDF |
+| `python_app/version_manager.py` | Verificação e instalação de atualizações pelo GitHub |
+| `scripts/build_installer.py` | Gera o instalador `.exe` e o pacote portátil |
+| `scripts/release_version.py` | Publica uma nova versão |
 
-### Opção B — Servidor Web Local em Node.js
+## Como usar
 
-#### Pré-requisitos
-- **Node.js** versão 18 ou superior (validado em Node.js v24 no Windows).
-- Não exige conexão com a internet para funcionar: a aplicação conta com motores nativos embutidos em `src/lib/` (além de suporte automático a pacotes opcionais caso instalados via `npm install`).
+1. **Banco de dados do Clipp** — escolha o arquivo `.FDB` e clique em *Ler banco de dados*.
+2. **Período** — informe as datas, ou deixe em branco: ao importar o PDF/XMLs o período é preenchido com as datas dos arquivos.
+3. **Arquivos** — importe os XMLs (`.zip`, `.rar`, `.xml` ou uma pasta) e/ou o relatório PDF.
+4. Veja o **Resumo** e a aba **Diferenças encontradas**; salve o resultado em Excel ou PDF.
 
-#### Como iniciar o servidor Node.js localmente
-
-No diretório raiz do projeto (`c:\Work\Pessoal\Projetos\ConfereFiscal`), execute:
-
-```powershell
-# 1. (Opcional) Gerar os arquivos fictícios de exemplo na pasta ./exemplos
-npm run generate-samples
-
-# 2. (Opcional) Executar a bateria automatizada de validação de ponta a ponta
-npm test
-
-# 3. Iniciar o servidor web local
-npm start
-```
-
-Em seguida, abra no navegador:
-- **http://127.0.0.1:3000**
-
----
-
-## Fluxo Guiado em 7 Etapas
-
-1. **Etapa 1 — Importar XMLs (`.zip`, `.rar`, `.xml`)**:
-   - Extrai recursivamente todos os XMLs contidos na raiz e em subpastas dos arquivos `.zip` e `.rar`.
-   - Apresenta andamento e ocorrências por arquivo (XML malformado, NF-e de entrada `tpNF=0`, devoluções `finNFe=4`, remessas) sem interromper a leitura dos demais documentos.
-   - Correlaciona automaticamente arquivos de evento de cancelamento (`procEventoNFe` / `tpEvento=110111`) à chave de acesso da nota original.
-   - Detecta duplicidades (mesmo hash SHA-256, mesma chave de 44 dígitos ou mesmo Número + Série + Modelo) e sinaliza claramente campos ausentes no XML.
-2. **Etapa 2 — Importar Relatório PDF**:
-   - Extrai cabeçalhos e linhas do relatório de vendas.
-   - Detecta automaticamente quando um PDF foi digitalizado como imagem (sem camada de texto selecionável) e oferece **OCR Local** imediato.
-3. **Etapa 3 — Revisar Dados e Mapear Campos**:
-   - Permite configurar/confirmar o mapeamento das colunas do PDF (Data, Número, Série, Modelo, Valor Total, Forma de Pagamento, Status e Chave de Acesso).
-   - Exibe tabela de prévia editável para corrigir manualmente células, excluir subtotais/rodapés ou adicionar linhas antes da conciliação.
-4. **Etapa 4 — Configurar e Testar Firebird (Opcional — 2.5 e 5.0)**:
-   - Permite configurar Host, Porta, Caminho do arquivo `.fdb`/`.gdb` ou Alias, Usuário, Senha, Charset e Versão alvo (`Auto-detectar`, `Firebird 2.5` ou `Firebird 5.0`).
-   - Inspeciona o cabeçalho binário ODS do arquivo local (`ODS 11.2` = Firebird 2.5; `ODS 13.1` = Firebird 5.0) e consulta a versão da engine via SQL.
-   - Descobre tabelas, views e colunas do esquema sem presumir nomes fixos e gera prévia SQL somente-leitura (`SELECT FIRST 15 ...`).
-5. **Etapa 5 — Executar Conciliação**:
-   - Permite escolher entre **Data de Emissão (`dhEmi`)** e **Data de Autorização (`dhRecbto`)**, confronto de forma de pagamento e confronto em 3 vias com o Firebird.
-6. **Etapa 6 — Revisar Divergências**:
-   - Classifica os registros nas **9 categorias obrigatórias**:
-     1. *Conciliados*
-     2. *Encontrados somente nos XMLs*
-     3. *Encontrados somente no PDF*
-     4. *Divergências de data*
-     5. *Divergências de valor*
-     6. *Divergências de número, série ou chave*
-     7. *Cancelados, denegados ou inválidos*
-     8. *Possíveis duplicidades*
-     9. *Registros que precisam de revisão manual*
-   - Não realiza correspondências silenciosas por valor aproximado; exibe o critério exato de vínculo e permite confirmar, rejeitar ou reclassificar casos ambíguos com nota de auditoria.
-7. **Etapa 7 — Exportar Resultados**:
-   - Exporta os resultados (respeitando os filtros ativos) para **CSV** (UTF-8 com BOM), **Excel (`.xlsx` multi-abas)** e **Relatório PDF executivo**, incluindo data/hora da análise, arquivos utilizados, filtros e critérios de comparação.
-
----
-
-## Segurança e Operação Local
-
-- **Zero Envio Externo**: Nenhum arquivo XML, PDF, credencial ou dado do Firebird sai da máquina local (`127.0.0.1`).
-- **Preservação dos Originais**: Os arquivos importados nunca são alterados nem excluídos.
-- **Armazenamento Temporário Transparente**: Todos os arquivos temporários, logs sanitizados e configurações ficam centralizados em `.local_data/` (visível no botão **"Armazenamento & Segurança Local"** no topo da interface, com opção de limpeza imediata mediante confirmação).
-- **Proteção de Credenciais**: Quando salva localmente, a senha do Firebird é criptografada com **AES-256-GCM** (`.local_data/config/firebird.enc.json`) e é automaticamente mascarada (`[PROTEGIDO]`) em qualquer log técnico.
-- **Consultas Estritamente Somente-Leitura**: Transações abertas com `ISOLATION_READ_COMMITTED_READ_ONLY` e validador sintático que bloqueia qualquer comando diferente de `SELECT`.
-
-Consulte também [docs/VALIDACAO_E_LIMITACOES.md](docs/VALIDACAO_E_LIMITACOES.md) para detalhes sobre os testes realizados e limitações conhecidas.
+Limitações conhecidas: veja [docs/VALIDACAO_E_LIMITACOES.md](docs/VALIDACAO_E_LIMITACOES.md).

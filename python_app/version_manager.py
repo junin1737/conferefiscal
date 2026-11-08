@@ -260,7 +260,7 @@ def check_published_version(
 
 # Pastas/arquivos do pacote publicado que são copiados para a instalação.
 # Nunca tocamos em dados do cliente (dados_locais/, .local_data/) nem no runtime Python embutido.
-UPDATE_PATHS = ("python_app/", "src/public/", "docs/", "version.json", "README.md")
+UPDATE_PATHS = ("python_app/", "docs/", "version.json", "README.md")
 
 
 def _download(url: str, timeout: float = 60.0) -> bytes:
@@ -364,7 +364,6 @@ def bump_project_version(
     Incrementa a versão do projeto (`patch`, `minor` ou `major`) em:
       - `version.json`
       - `python_app/__init__.py`
-      - `package.json`
     """
     info = get_installed_version_info()
     maj, min_, pat = parse_semver(info["version"])
@@ -405,14 +404,5 @@ def bump_project_version(
         content = re.sub(r'__version__\s*=\s*"[^"]*"', f'__version__ = "{new_ver}"', content)
         init_py.write_text(content, encoding="utf-8")
 
-    # Atualiza package.json
-    pkg_json = ROOT_DIR / "package.json"
-    if pkg_json.exists():
-        try:
-            pkg_data = json.loads(pkg_json.read_text(encoding="utf-8"))
-            pkg_data["version"] = new_ver
-            pkg_json.write_text(json.dumps(pkg_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        except Exception:
-            pass
 
     return info

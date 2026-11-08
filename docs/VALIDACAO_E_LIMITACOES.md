@@ -6,7 +6,7 @@ Este documento registra a validação completa realizada sobre o **ConfereFiscal
 
 ## 1. Cenários Validados com Arquivos Fictícios de Exemplo
 
-Os arquivos fictícios de validação são gerados automaticamente na pasta `./exemplos` pelo comando `npm run generate-samples` e testados de ponta a ponta por `npm test` (`scripts/validate-e2e.js`):
+Os arquivos fictícios de validação ficam na pasta `./exemplos` e são usados pela suíte de testes (`python_app/test_python_app.py`):
 
 ### 1.1. Arquivos Gerados e Testados
 - **`exemplos/pacote_vendas_exemplo.zip`** e **`exemplos/pacote_vendas_exemplo.rar`**:
@@ -60,6 +60,6 @@ Os arquivos fictícios de validação são gerados automaticamente na pasta `./e
 1. **Arquivos `.zip` ou `.rar` protegidos por senha**:
    - Pacotes compactados criptografados com senha não podem ser abertos automaticamente; o usuário deve descompactá-los ou remover a senha antes da importação (o sistema exibe mensagem de erro clara para o arquivo sem travar a aplicação).
 2. **Firebird 5.0 com `WireCrypt = Required` estrito ou plugin `Srp256` exclusivo**:
-   - Conexões TCP locais com instâncias do Firebird 5.0 que estejam configuradas com `WireCrypt = Required` e sem `Legacy_Auth` habilitado no `firebird.conf` podem recusar o handshake de clientes wire Node.js padrão. O sistema diagnostica especificamente esse erro e orienta a habilitar `AuthServer = Srp256, Srp, Legacy_Auth` e `WireCrypt = Enabled` no `firebird.conf` para acesso local (`127.0.0.1`).
+   - Conexões TCP locais com instâncias do Firebird 5.0 que estejam configuradas com `WireCrypt = Required` e sem `Legacy_Auth` habilitado no `firebird.conf` podem recusar a conexão de clientes externos. O sistema diagnostica especificamente esse erro e orienta a habilitar `AuthServer = Srp256, Srp, Legacy_Auth` e `WireCrypt = Enabled` no `firebird.conf` para acesso local (`127.0.0.1`).
 3. **Volume de Arquivos por Sessão**:
    - Por segurança e prevenção contra ataques de exaustão de memória (*ZipBomb*), cada upload é limitado a **150 MB por arquivo compactado**, **300 MB descomprimidos** e até **10.000 arquivos XML** por pacote.
