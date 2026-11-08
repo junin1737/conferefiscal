@@ -111,7 +111,7 @@ def get_installed_version_info() -> Dict[str, Any]:
 def _http_get_json(url: str, timeout: float = 7.0) -> Optional[Dict[str, Any]]:
     """Executa requisição HTTP GET retornando JSON decodificado (com suporte TLS/SSL padrão)."""
     headers = {
-        "User-Agent": "ConfereFiscal-Updater/1.1 (+https://github.com/junin1737/conferefiscal)",
+        "User-Agent": "ConfereFiscal-Updater/1.2 (+https://github.com/junin1737/conferefiscal)",
         "Accept": "application/json, application/vnd.github+json",
         "Cache-Control": "no-cache",
     }
@@ -183,31 +183,6 @@ def check_published_version(
             errors_seen.append(f"contents_api: HTTP {he.code}")
         except Exception as exc:
             errors_seen.append(f"contents_api: {exc}")
-
-    # 3. Consulta também GitHub Releases (/releases/latest) para obter binário do instalador ou tag mais recente
-    releases_url = f"https://api.github.com/repos/{repo}/releases/latest"
-    try:
-        rel_data = _http_get_json(releases_url, timeout=timeout)
-        if isinstance(rel_data, dict) and rel_data.get("tag_name"):
-            rel_ver = format_semver(str(rel_data["tag_name"]))
-            if not remote_version or compare_versions(remote_version, rel_ver) > 0:
-                remote_version = rel_ver
-                remote_date = str(rel_data.get("published_at") or "")[:10]
-                source_used = f"GitHub Release ({rel_data.get('tag_name')})"
-            body_txt = str(rel_data.get("body") or "").strip()
-            if body_txt and not remote_changelog:
-                remote_changelog = [ln.strip("- *") for ln in body_txt.splitlines() if ln.strip()]
-            for asset in rel_data.get("assets") or []:
-                a_name = str(asset.get("name") or "")
-                b_url = str(asset.get("browser_download_url") or "")
-                if b_url and a_name.lower().endswith(".exe"):
-                    installer_download_url = b_url
-                elif b_url and a_name.lower().endswith(".zip") and not installer_download_url:
-                    download_url = b_url
-    except urllib.error.HTTPError as he:
-        errors_seen.append(f"releases_api: HTTP {he.code}")
-    except Exception as exc:
-        errors_seen.append(f"releases_api: {exc}")
 
     checked_at = datetime.now().isoformat(timespec="seconds")
 
@@ -283,13 +258,25 @@ def check_published_version(
     }
 
 
+# Pastas/arquivos do pacote publicado que são copiados para a instalação.
+# Nunca tocamos em dados do cliente (dados_locais/, .local_data/) nem no runtime Python embutido.
+UPDATE_PATHS = ("python_app/", "src/public/", "docs/", "version.json", "README.md")
+
+
+def _download(url: str, timeout: float = 60.0) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "ConfereFiscal-Updater/1.2", "Cache-Control": "no-cache"})
+    with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as resp:
+        return resp.read()
+
+
 def apply_published_update(
     remote_info: Optional[Dict[str, Any]] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """
-    Baixa e aplica a versão publicada do repositório GitHub (`junin1737/conferefiscal`),
-    preservando integralmente a base de dados local (`dados_locais/`) e configurações.
+    Baixa o código publicado no GitHub (branch principal), confere a versão,
+    faz backup dos arquivos atuais e instala a nova versão por cima.
+    Os dados locais (dados_locais/, .local_data/) são preservados.
     """
     def _notify(msg: str) -> None:
         if progress_callback:
@@ -302,116 +289,70 @@ def apply_published_update(
     repo = str(info.get("repository") or DEFAULT_GITHUB_REPO)
     local_info = get_installed_version_info()
     branch = str(local_info.get("branch") or DEFAULT_BRANCH)
-
-    # Estratégia 1: Se existir um instalador compilado (.exe) anexado na Release do GitHub, baixa e executa em modo silencioso
-    installer_url = info.get("installerDownloadUrl")
-    if installer_url:
-        try:
-            _notify("Baixando instalador atualizado do GitHub Releases...")
-            ctx = ssl.create_default_context()
-            req = urllib.request.Request(
-                installer_url,
-                headers={"User-Agent": "ConfereFiscal-Updater/1.1"},
-            )
-            tmp_dir = Path(tempfile.mkdtemp(prefix="conferefiscal_upd_"))
-            setup_exe = tmp_dir / "Instalador_ConfereFiscal_Setup.exe"
-            with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
-                setup_exe.write_bytes(resp.read())
-            _notify("Executando atualização silenciosa do pacote...")
-            subprocess.Popen([str(setup_exe), "/SILENT"])
-            return {
-                "ok": True,
-                "method": "GITHUB_RELEASE_INSTALLER",
-                "updatedToVersion": info.get("publishedVersion") or local_info["version"],
-                "message": (
-                    "O instalador da nova versão foi baixado e iniciado em modo automático.\n"
-                    "Reinicie o ConfereFiscal em alguns segundos para usar a nova versão."
-                ),
-            }
-        except Exception:
-            pass
-
-    # Estratégia 2: Download do pacote ZIP da branch principal do GitHub e atualização dos módulos locais
     zip_url = str(info.get("downloadUrl") or f"https://github.com/{repo}/archive/refs/heads/{branch}.zip")
+
     try:
-        _notify(f"Baixando pacote de atualização de {repo} ({branch})...")
-        ctx = ssl.create_default_context()
-        req = urllib.request.Request(
-            zip_url,
-            headers={"User-Agent": "ConfereFiscal-Updater/1.1"},
-        )
-        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-            zip_bytes = resp.read()
+        _notify("Baixando a nova versão...")
+        zip_bytes = _download(f"{zip_url}?t={int(datetime.now().timestamp())}")
 
-        _notify("Extraindo e aplicando arquivos da nova versão...")
-        updated_files_count = 0
-        protected_prefixes = ("dados_locais/", ".local_data/", ".git/", ".venv/", "node_modules/")
-
+        _notify("Conferindo o pacote baixado...")
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
-            names = zf.namelist()
+            names = [n for n in zf.namelist() if not n.endswith("/")]
             if not names:
-                raise RuntimeError("O arquivo ZIP baixado do GitHub está vazio.")
-            top_prefix = names[0].split("/")[0] + "/" if "/" in names[0] else ""
-
+                raise RuntimeError("O pacote baixado está vazio.")
+            top = names[0].split("/")[0] + "/" if "/" in names[0] else ""
+            files: Dict[str, bytes] = {}
             for member in names:
-                if member.endswith("/"):
-                    continue
-                rel_path = member[len(top_prefix) :] if top_prefix and member.startswith(top_prefix) else member
-                if not rel_path or any(rel_path.startswith(p) for p in protected_prefixes):
-                    continue
-                # Atualiza módulos de código e manifesto de versão
-                if rel_path == "version.json" or rel_path.startswith(("python_app/", "src/", "scripts/", "docs/")):
-                    target_file = ROOT_DIR / rel_path
-                    target_file.parent.mkdir(parents=True, exist_ok=True)
-                    target_file.write_bytes(zf.read(member))
-                    updated_files_count += 1
+                rel = member[len(top):] if top and member.startswith(top) else member
+                if rel and (rel in UPDATE_PATHS or rel.startswith(tuple(p for p in UPDATE_PATHS if p.endswith("/")))):
+                    if ".." in Path(rel).parts:
+                        continue
+                    files[rel] = zf.read(member)
 
-        new_local_info = get_installed_version_info()
+        if "version.json" not in files or "python_app/desktop_app.py" not in files:
+            raise RuntimeError("O pacote baixado não contém os arquivos do aplicativo.")
+        new_version = format_semver(json.loads(files["version.json"].decode("utf-8")).get("version", "0.0.0"))
+        if compare_versions(local_info["version"], new_version) < 0 and not info.get("forceReinstall"):
+            raise RuntimeError(
+                f"O pacote publicado (v{new_version}) é mais antigo que a versão instalada (v{local_info['version']})."
+            )
+
+        # Backup da versão atual (permite desfazer manualmente se algo der errado)
+        _notify("Fazendo backup da versão atual...")
+        backup_dir = ROOT_DIR / ".local_data" / "backups" / f"v{local_info['version']}_{datetime.now():%Y%m%d_%H%M%S}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for rel in files:
+            cur = ROOT_DIR / rel
+            if cur.exists():
+                dst = backup_dir / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cur, dst)
+
+        _notify("Instalando a nova versão...")
+        for rel, data in files.items():
+            target = ROOT_DIR / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_name(target.name + ".novo")
+            tmp.write_bytes(data)
+            os.replace(tmp, target)
+
+        # Remove caches antigos para garantir que o Python carregue o código novo
+        for cache in (ROOT_DIR / "python_app").rglob("__pycache__"):
+            shutil.rmtree(cache, ignore_errors=True)
+
         return {
             "ok": True,
             "method": "GITHUB_ARCHIVE_ZIP",
-            "updatedFilesCount": updated_files_count,
-            "updatedToVersion": new_local_info["version"],
-            "message": (
-                f"Atualização concluída com sucesso para a versão v{new_local_info['version']}!\n"
-                f"• Arquivos atualizados: {updated_files_count}\n"
-                f"• Seus dados locais foram preservados.\n\n"
-                f"Reinicie a aplicação para carregar os módulos atualizados em memória."
-            ),
+            "updatedFilesCount": len(files),
+            "updatedToVersion": new_version,
+            "backupDir": str(backup_dir),
+            "message": f"Atualizado para a versão {new_version}. Reinicie o aplicativo.",
         }
-    except Exception as zip_exc:
-        # Estratégia 3: Fallback via `git pull` caso o diretório possua `.git`
-        if (ROOT_DIR / ".git").exists():
-            try:
-                _notify("Executando git pull origin main...")
-                proc = subprocess.run(
-                    ["git", "pull", "--ff-only", "origin", branch],
-                    cwd=str(ROOT_DIR),
-                    capture_output=True,
-                    text=True,
-                    timeout=25,
-                )
-                if proc.returncode == 0:
-                    new_local_info = get_installed_version_info()
-                    return {
-                        "ok": True,
-                        "method": "GIT_PULL",
-                        "updatedToVersion": new_local_info["version"],
-                        "message": (
-                            f"Repositório sincronizado via Git (v{new_local_info['version']}).\n"
-                            f"Saída: {proc.stdout.strip() or 'Atualizado.'}"
-                        ),
-                    }
-            except Exception:
-                pass
-
+    except Exception as exc:
         return {
             "ok": False,
-            "error": str(zip_exc),
-            "message": (
-                f"Não foi possível baixar ou aplicar a atualização de {repo}:\n{zip_exc}\n\n"
-                f"Verifique sua conexão com a internet ou se o repositório {DEFAULT_GITHUB_URL} está acessível."
-            ),
+            "error": str(exc),
+            "message": f"Não foi possível atualizar: {exc}\n\nVerifique a internet e tente novamente.",
         }
 
 

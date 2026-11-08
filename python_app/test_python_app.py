@@ -284,11 +284,10 @@ class TestConfereFiscalPythonApp(unittest.TestCase):
             app = ConfereFiscalDesktopApp(root)
             root.update_idletasks()
 
-            # 1. Ao abrir, todos os valores devem estar zerados e importação bloqueada
+            # 1. Ao abrir, valores zerados; importação sempre liberada (o período é preenchido pelos arquivos)
             self.assertFalse(app.period_filter_applied)
-            self.assertFalse(app.btn_import_xml_files._enabled)
-            self.assertFalse(app.btn_import_xml_folder._enabled)
-            self.assertFalse(app.btn_import_pdf._enabled)
+            self.assertTrue(app.btn_import_xml_files._enabled)
+            self.assertTrue(app.btn_import_pdf._enabled)
             self.assertEqual(app.kpi_bco_emi_val.cget("text"), "R$ 0,00")
             self.assertEqual(app.kpi_bco_aut_val.cget("text"), "R$ 0,00")
             self.assertEqual(app.kpi_xml_val.cget("text"), "R$ 0,00")
@@ -312,18 +311,65 @@ class TestConfereFiscalPythonApp(unittest.TestCase):
             self.assertGreater(float(app.last_db_audit_data.get("totalBancoAutorizacao", 0.0)), 0.0)
 
             # 3. Alterna entre abas principais sem erros
-            for tab_key in ("overview", "nfe55", "nfce65", "events", "divergences", "sql"):
+            for tab_key in ("overview", "nfe55", "nfce65", "events", "divergences"):
                 app.switch_main_tab(tab_key)
                 root.update_idletasks()
 
-            # 4. Zera o filtro de período -> volta a R$ 0,00 e bloqueia importação novamente
+            # 4. Limpa o período -> volta a R$ 0,00
             app.clear_period_filter()
             root.update_idletasks()
             self.assertFalse(app.period_filter_applied)
-            self.assertFalse(app.btn_import_xml_files._enabled)
             self.assertEqual(app.kpi_bco_emi_val.cget("text"), "R$ 0,00")
         finally:
             root.destroy()
+
+
+    def test_08_pdf_relatorio_com_fonte_identity_h(self) -> None:
+        """Relatório no formato do Clipp: texto em hexadecimal (Identity-H) com tabela ToUnicode."""
+        import zlib
+        from python_app.fiscal_parsers import parse_sales_pdf_bytes
+
+        def hx(text: str) -> str:  # glyph = código do caractere - 29 (como no Arial do Clipp)
+            return "<" + "".join(f"{ord(c) - 29:04X}" for c in text) + ">"
+
+        rows = [
+            ["NF Número", "Série", "Mod", "Data", "CFOP", "Cliente", "Total Nota", "ICMS"],
+            ["13700", "1", "65", "01/10/2026", "5102", "CLIENTES DIVERSOS", "56,590", "0,000"],
+            ["13701", "1", "65", "02/10/2026", "5102", "CLIENTES DIVERSOS", "1.023,840", "0,000"],
+            ["Total de documentos:", "2", "Totais:", "1.080,430"],
+        ]
+        xs = [30, 80, 110, 140, 200, 240, 450, 520]
+        ops = []
+        y = 780
+        for r in rows:
+            for x, cell in zip(xs, r):
+                ops.append(f"BT /F1 8 Tf {x} {y} Td {hx(cell)} Tj ET")
+            y -= 12
+        content = zlib.compress("\n".join(ops).encode("latin1"))
+        chars = sorted({c for r in rows for cell in r for c in cell})
+        cmap = ("1 begincodespacerange <0000> <FFFF> endcodespacerange\n" + f"{len(chars)} beginbfchar\n"
+                + "".join(f"<{ord(c) - 29:04X}> <{ord(c):04X}>\n" for c in chars) + "endbfchar")
+        cmap_b = cmap.encode("latin1")
+        objs = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+            b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(content) + content + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /Arial /Encoding /Identity-H /ToUnicode 6 0 R >>",
+            b"<< /Length %d >>\nstream\n" % len(cmap_b) + cmap_b + b"\nendstream",
+        ]
+        pdf = b"%PDF-1.7\n" + b"".join(b"%d 0 obj\n" % (i + 1) + o + b"\nendobj\n" for i, o in enumerate(objs))
+        pdf += b"trailer\n<< /Root 1 0 R >>\n%%EOF"
+
+        res = parse_sales_pdf_bytes(pdf, "relatorio_clipp.pdf")
+        self.assertFalse(res["isScannedImagePdf"])
+        self.assertEqual(len(res["records"]), 2)
+        self.assertEqual(res["records"][0]["number"], "13700")
+        self.assertEqual(res["records"][0]["issueDate"], "2026-10-01")
+        self.assertAlmostEqual(res["records"][1]["totalValue"], 1023.84)
+        self.assertEqual(res["records"][0]["customer"], "CLIENTES DIVERSOS")
+        self.assertEqual(len(res["reportChecks"]), 2)
+        self.assertTrue(all(c["ok"] for c in res["reportChecks"]))
 
 
 if __name__ == "__main__":

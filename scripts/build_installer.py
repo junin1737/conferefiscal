@@ -611,7 +611,7 @@ def stage_application_files(stage_dir: Path, icon_path: Path, manifest_path: Pat
 
     if (ROOT_DIR / "docs").exists():
         shutil.copytree(ROOT_DIR / "docs", stage_dir / "docs", dirs_exist_ok=True)
-    for doc_file in ["README.md", "requirements.txt"]:
+    for doc_file in ["README.md", "requirements.txt", "version.json"]:
         if (ROOT_DIR / doc_file).exists():
             shutil.copy2(ROOT_DIR / doc_file, stage_dir / doc_file)
 
@@ -1152,8 +1152,10 @@ def main() -> None:
     stage_application_files(PORTABLE_STAGE_DIR, icon_path, manifest_path)
 
     # 2. Gera o pacote ZIP portátil (e que também serve de payload para o instalador .exe)
-    portable_zip_path = DIST_DIR / "ConfereFiscal_Portatil_v1.0.0.zip"
-    print("  [4/5] Compactando pacote portátil (ConfereFiscal_Portatil_v1.0.0.zip)...")
+    import json as _json
+    app_version = _json.loads((ROOT_DIR / "version.json").read_text(encoding="utf-8")).get("version", "1.0.0")
+    portable_zip_path = DIST_DIR / f"ConfereFiscal_Portatil_v{app_version}.zip"
+    print(f"  [4/5] Compactando pacote portátil ({portable_zip_path.name})...")
     create_zip_from_stage(PORTABLE_STAGE_DIR, portable_zip_path)
 
     # 3. Compila o instalador único Instalador_ConfereFiscal_Setup.exe com o payload embutido

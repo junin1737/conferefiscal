@@ -104,6 +104,14 @@ def _norm_iso_date(val: Optional[str]) -> Optional[str]:
     return s[:10]
 
 
+def _fmt_brl_txt(v) -> str:
+    try:
+        n = float(v or 0)
+    except (TypeError, ValueError):
+        n = 0.0
+    return "R$ " + f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def _fmt_br_date(iso_str: Optional[str]) -> str:
     if not iso_str:
         return "—"
@@ -275,6 +283,9 @@ def build_audit_dashboard_report(
         has_xml: bool,
         has_pdf: bool,
     ) -> Dict[str, Any]:
+        def _brl(v: float) -> str:
+            return "R$ " + f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
         # Define valor de referência externo (XML prioritário, ou PDF)
         ref_ext = v_xml if has_xml else (v_pdf if has_pdf else None)
         if has_db and ref_ext is not None:
@@ -285,58 +296,58 @@ def build_audit_dashboard_report(
             if bateu_emi and bateu_aut:
                 return {
                     "code": "BATEU_AMBOS",
-                    "label": "Bateu Emissão e Autorização",
+                    "label": "✓ Valores batem",
                     "badge": "success",
                     "difference": 0.0,
-                    "detail": "Faturamento do Banco (Emissão e Autorização) coincide exatamente com o lote externo.",
+                    "detail": "Banco igual aos arquivos, por emissão e por autorização.",
                 }
             if bateu_emi:
                 return {
                     "code": "BATEU_EMISSAO",
-                    "label": "Bateu Emissão",
+                    "label": "✓ Bate pela emissão",
                     "badge": "success",
                     "difference": diff_aut,
-                    "detail": f"Bateu pela Data de Emissão! Diferença na Autorização SEFAZ (D+1): R$ {diff_aut:,.2f}.",
+                    "detail": f"Pela data de autorização a diferença é {_brl(diff_aut)}.",
                 }
             if bateu_aut:
                 return {
                     "code": "BATEU_AUTORIZACAO",
-                    "label": "Bateu Autorização",
+                    "label": "✓ Bate pela autorização",
                     "badge": "success",
                     "difference": diff_emi,
-                    "detail": f"Bateu pela Data de Autorização SEFAZ! Diferença na Emissão (D+1): R$ {diff_emi:,.2f}.",
+                    "detail": f"Pela data de emissão a diferença é {_brl(diff_emi)}.",
                 }
             active_diff = diff_aut if date_field == "authDate" else diff_emi
             return {
                 "code": "DIVERGENTE",
-                "label": f"Divergente em R$ {abs(active_diff):.2f}",
+                "label": f"Diferença de {_brl(active_diff)}",
                 "badge": "danger",
                 "difference": active_diff,
-                "detail": f"Dif. Emissão: R$ {diff_emi:.2f} | Dif. Autorização: R$ {diff_aut:.2f}.",
+                "detail": f"Por emissão: {_brl(diff_emi)} • Por autorização: {_brl(diff_aut)}",
             }
         elif has_xml and has_pdf:
             diff_xp = round(v_xml - v_pdf, 2)
             if abs(diff_xp) < 0.01:
                 return {
                     "code": "BATEU_XML_PDF",
-                    "label": "Bateu XML vs PDF",
+                    "label": "✓ XML igual ao relatório",
                     "badge": "success",
                     "difference": 0.0,
-                    "detail": "Total dos XMLs coincide com o Relatório PDF.",
+                    "detail": "O total dos XMLs é igual ao do relatório PDF.",
                 }
             return {
                 "code": "DIVERGENTE",
-                "label": f"Divergente em R$ {abs(diff_xp):.2f}",
+                "label": f"Diferença de {_brl(diff_xp)}",
                 "badge": "danger",
                 "difference": diff_xp,
-                "detail": f"Diferença entre XML e Relatório PDF: R$ {diff_xp:.2f}.",
+                "detail": f"XML × relatório PDF: {_brl(diff_xp)}",
             }
         return {
             "code": "AGUARDANDO_FONTES",
-            "label": "Aguardando Lotes para Confronto",
+            "label": "Aguardando arquivos",
             "badge": "neutral",
             "difference": 0.0,
-            "detail": "Carregue pelo menos duas fontes (Banco, XML ou PDF) para apurar o status de batimento.",
+            "detail": "Carregue o banco e os XMLs ou o relatório.",
         }
 
     has_db = len(norm_db_docs) > 0
@@ -791,7 +802,7 @@ def build_audit_dashboard_report(
                     data_hora_sefaz=p.get("authDate") or (b_match["data_hora_sefaz"] if b_match else None),
                     status_des=(b_match["status_des"] if b_match else str(p.get("status") or "AUTORIZADO NO PDF")),
                     valor=float(p.get("totalValue") or 0.0),
-                    origem_falha="Consta no Relatório mas NÃO consta no XML",
+                    origem_falha="Está no relatório PDF, mas não tem XML",
                     codigo_falha="RELATORIO_SEM_XML",
                     valor_banco=b_match["valor"] if b_match else None,
                     valor_xml=None,
@@ -816,7 +827,7 @@ def build_audit_dashboard_report(
             origem = "Consta no XML mas NÃO consta no Relatório / Banco"
             cod = "XML_SEM_RELATORIO_E_BANCO"
         elif missing_db:
-            origem = "Consta no XML mas NÃO consta no Banco (tb_nfvenda / tb_nfe)"
+            origem = "Tem XML, mas não está no banco do Clipp"
             cod = "XML_SEM_BANCO"
         elif missing_pdf:
             origem = "Consta no XML mas NÃO consta no Relatório PDF"
@@ -853,7 +864,7 @@ def build_audit_dashboard_report(
                 data_hora_sefaz=x.get("authTimestamp") or b_match["data_hora_sefaz"],
                 status_des=b_match["status_des"] or x.get("statusDescription") or "",
                 valor=v_x,
-                origem_falha=f"Divergência de Valor (XML R$ {v_x:.2f} vs Banco R$ {b_match['valor']:.2f})",
+                origem_falha=f"Valor diferente: XML {_fmt_brl_txt(v_x)} × banco {_fmt_brl_txt(b_match['valor'])}",
                 codigo_falha="DIVERGENCIA_VALOR",
                 valor_banco=b_match["valor"],
                 valor_xml=v_x,
@@ -870,7 +881,7 @@ def build_audit_dashboard_report(
                 data_hora_sefaz=x.get("authTimestamp") or x.get("authDate"),
                 status_des=x.get("statusDescription") or "",
                 valor=v_x,
-                origem_falha=f"Divergência de Valor (XML R$ {v_x:.2f} vs Relatório PDF R$ {vp:.2f})",
+                origem_falha=f"Valor diferente: XML {_fmt_brl_txt(v_x)} × relatório {_fmt_brl_txt(vp)}",
                 codigo_falha="DIVERGENCIA_VALOR",
                 valor_banco=b_match["valor"] if b_match else None,
                 valor_xml=v_x,
@@ -895,7 +906,7 @@ def build_audit_dashboard_report(
                 data_hora_sefaz=d["data_hora_sefaz"],
                 status_des=d["status_des"],
                 valor=d["valor"],
-                origem_falha="Consta no Banco mas não possui XML correspondente",
+                origem_falha="Está no banco do Clipp, mas não tem XML",
                 codigo_falha="BANCO_SEM_XML",
                 valor_banco=d["valor"],
                 valor_xml=None,
@@ -906,14 +917,14 @@ def build_audit_dashboard_report(
         if d["status"] == "AUTORIZADO" and len(k_d) != 44:
             _add_matrix_row(
                 nf_numero=n_d,
-                id_nfe=k_d or "SEM CHAVE 44 DÍGITOS EM TB_NFE",
+                id_nfe=k_d or "(sem chave de acesso)",
                 nf_modelo=m_d,
                 nf_serie=d["nf_serie"],
                 dt_emissao=d["dt_emissao"],
                 data_hora_sefaz=d["data_hora_sefaz"],
                 status_des=d["status_des"],
                 valor=d["valor"],
-                origem_falha="Consta em tb_nfvenda mas sem Chave de 44 dígitos válida em tb_nfe",
+                origem_falha="Nota no banco sem chave de acesso válida (não transmitida?)",
                 codigo_falha="CHAVE_INVALIDA_OU_AUSENTE",
                 valor_banco=d["valor"],
                 valor_xml=float(x_match.get("totalValue") or 0.0) if x_match else None,
@@ -936,7 +947,7 @@ def build_audit_dashboard_report(
             data_hora_sefaz=d["data_hora_sefaz"],
             status_des=d["status_des"],
             valor=d["valor"],
-            origem_falha=f"Desafio Temporal (D+1): Emitida em {_fmt_br_date(d['dt_emissao'])} e Autorizada SEFAZ em {_fmt_br_date(d['dt_autorizacao'])}",
+            origem_falha=f"Emitida em {_fmt_br_date(d['dt_emissao'])} e autorizada em {_fmt_br_date(d['dt_autorizacao'])}",
             codigo_falha="DIVERGENCIA_D_MAIS_1",
             valor_banco=d["valor"],
             valor_xml=float(x_match.get("totalValue") or 0.0) if x_match else None,

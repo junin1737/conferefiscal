@@ -1,20 +1,29 @@
 {
   "appName": "ConfereFiscal",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "channel": "stable",
   "releaseDate": "2026-11-08",
   "repository": "junin1737/conferefiscal",
   "repositoryUrl": "https://github.com/junin1737/conferefiscal",
   "branch": "main",
   "installerAssetName": "Instalador_ConfereFiscal_Setup.exe",
-  "portableAssetName": "ConfereFiscal_Portatil_v1.1.0.zip",
+  "portableAssetName": "ConfereFiscal_Portatil_v1.2.0.zip",
   "changelog": [
+    "v1.2.0 - Leitura do relatório de vendas em PDF do Clipp corrigida (confere com os totais do rodapé)",
+    "v1.2.0 - Período preenchido automaticamente pelas datas do PDF ou dos XMLs",
+    "v1.2.0 - Telas simplificadas, com textos claros e sem termos técnicos",
+    "v1.2.0 - Botão de atualização: baixa, instala e reinicia o aplicativo sozinho",
     "v1.1.0 - Correção da leitura binária de valores (TB_NFVENDA_TOT e TB_NFV_ITEM) e remontagem de registros fragmentados SEFAZ (TB_NFE)",
     "v1.1.0 - Carregamento e sincronização automática dos valores do banco ao aplicar o filtro de período",
     "v1.1.0 - Esquema de versionamento integrado ao GitHub (junin1737/conferefiscal) com botão Atualizar na aplicação",
     "v1.0.0 - Lançamento inicial do Dashboard Executivo de Conciliação e Auditoria Fiscal (NF-e 55 / NFC-e 65 / Firebird / XML / PDF)"
   ],
   "history": [
+    {
+      "version": "1.2.0",
+      "date": "2026-11-08",
+      "summary": "Leitura de PDF do Clipp, telas simplificadas e atualização automática pelo GitHub."
+    },
     {
       "version": "1.1.0",
       "date": "2026-11-08",

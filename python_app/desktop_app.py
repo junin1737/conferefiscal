@@ -22,7 +22,6 @@ from python_app.fiscal_parsers import (
     extract_xml_from_folder,
     analyze_extracted_xmls,
     parse_sales_pdf_bytes,
-    perform_local_ocr_pdf_bytes,
 )
 from python_app.reconciliation_engine import (
     run_reconciliation,
@@ -214,7 +213,7 @@ class ConfereFiscalDesktopApp:
     Regras de Operação:
     1. Todos os valores iniciam zerados (R$ 0,00).
     2. É obrigatório informar e aplicar o Filtro de Período (Data Inicial e Data Final)
-       no Passo 2 para exibir os valores do banco no período e habilitar a importação
+       (ou preenchido automaticamente pelas datas do PDF/XMLs) para exibir os valores e a importação
        dos lotes XML (.zip, .rar, .xml) e PDF no Passo 3.
     """
 
@@ -223,7 +222,7 @@ class ConfereFiscalDesktopApp:
         self.version_info: Dict[str, Any] = get_installed_version_info()
         self.installed_version: str = str(self.version_info.get("version") or "1.1.0")
         self.last_version_check: Optional[Dict[str, Any]] = None
-        self.root.title(f"ConfereFiscal v{self.installed_version} — Auditoria e Conciliação Fiscal Contábil (NF-e 55 / NFC-e 65)")
+        self.root.title(f"ConfereFiscal {self.installed_version} — Conferência de vendas (NF-e / NFC-e)")
         self.root.geometry("1460x880")
         self.root.minsize(1220, 740)
         self.root.configure(bg=PALETTE["app_bg"])
@@ -287,6 +286,7 @@ class ConfereFiscalDesktopApp:
 
         # Inicializa na tela com todos os valores ZERADOS e importação bloqueada até aplicar o período
         self.refresh_all_views()
+        self._check_updates_in_background()
 
     def _load_window_icon(self) -> None:
         icon_path = _resolve_icon_path()
@@ -454,377 +454,174 @@ class ConfereFiscalDesktopApp:
     def _build_sidebar_card(self, step_tag: str, title: str, badge_text: str = "", badge_bg: str = "#1e293b", badge_fg: str = "#38bdf8") -> Tuple[tk.Frame, tk.Label]:
         outer = tk.Frame(self.sidebar, bg=PALETTE["sb_card_border"], padx=1, pady=1)
         outer.pack(fill="x", pady=(0, 9))
-        inner = tk.Frame(outer, bg=PALETTE["sb_card"], padx=10, pady=8)
+        inner = tk.Frame(outer, bg=PALETTE["sb_card"], padx=11, pady=9)
         inner.pack(fill="both", expand=True)
 
         hdr = tk.Frame(inner, bg=PALETTE["sb_card"])
-        hdr.pack(fill="x", pady=(0, 5))
-
-        pill = tk.Label(
-            hdr,
-            text=step_tag,
-            bg="#1e293b",
-            fg="#38bdf8",
-            font=("Segoe UI", 7, "bold"),
-            padx=5,
-            pady=1,
-        )
-        pill.pack(side="left", padx=(0, 6))
-
-        tk.Label(
-            hdr,
-            text=title,
-            bg=PALETTE["sb_card"],
-            fg="#f8fafc",
-            font=("Segoe UI", 9, "bold"),
-        ).pack(side="left")
-
-        lbl_badge = tk.Label(
-            hdr,
-            text=badge_text,
-            bg=badge_bg if badge_text else PALETTE["sb_card"],
-            fg=badge_fg,
-            font=("Segoe UI", 7, "bold"),
-            padx=5 if badge_text else 0,
-            pady=1,
-        )
+        hdr.pack(fill="x", pady=(0, 6))
+        tk.Label(hdr, text=step_tag, bg="#2563eb", fg="#ffffff", font=("Segoe UI", 8, "bold"), width=2).pack(side="left", padx=(0, 8))
+        tk.Label(hdr, text=title, bg=PALETTE["sb_card"], fg="#f8fafc", font=("Segoe UI", 10, "bold")).pack(side="left")
+        lbl_badge = tk.Label(hdr, text=badge_text, bg=badge_bg if badge_text else PALETTE["sb_card"], fg=badge_fg,
+                             font=("Segoe UI", 7, "bold"), padx=5 if badge_text else 0, pady=1)
         lbl_badge.pack(side="right")
         return inner, lbl_badge
 
+    def _sb_label(self, parent: tk.Widget, text: str, muted: bool = True, bold: bool = False, wrap: int = 295) -> tk.Label:
+        lbl = tk.Label(
+            parent,
+            text=text,
+            bg=PALETTE["sb_card"],
+            fg=PALETTE["sb_muted"] if muted else "#e2e8f0",
+            font=("Segoe UI", 9, "bold" if bold else "normal"),
+            justify="left",
+            anchor="w",
+            wraplength=wrap,
+        )
+        return lbl
+
     def _build_sidebar_content(self) -> None:
-        # Cabeçalho da Marca
+        # Marca
         brand_row = tk.Frame(self.sidebar, bg=PALETTE["sb_bg"])
-        brand_row.pack(fill="x", pady=(0, 10))
+        brand_row.pack(fill="x", pady=(0, 12))
         if self.sidebar_logo_photo is not None:
-            lbl_ico = tk.Label(brand_row, image=self.sidebar_logo_photo, bg=PALETTE["sb_bg"], bd=0)
-            lbl_ico.pack(side="left", padx=(0, 9))
+            tk.Label(brand_row, image=self.sidebar_logo_photo, bg=PALETTE["sb_bg"], bd=0).pack(side="left", padx=(0, 9))
         title_box = tk.Frame(brand_row, bg=PALETTE["sb_bg"])
         title_box.pack(side="left", fill="x", expand=True)
         title_top = tk.Frame(title_box, bg=PALETTE["sb_bg"])
         title_top.pack(fill="x")
-        tk.Label(
-            title_top,
-            text="ConfereFiscal",
-            bg=PALETTE["sb_bg"],
-            fg="#ffffff",
-            font=("Segoe UI", 14, "bold"),
-        ).pack(side="left")
+        tk.Label(title_top, text="ConfereFiscal", bg=PALETTE["sb_bg"], fg="#ffffff", font=("Segoe UI", 15, "bold")).pack(side="left")
         self.lbl_sidebar_version_badge = tk.Label(
-            title_top,
-            text=f"v{self.installed_version}",
-            bg="#1e293b",
-            fg="#38bdf8",
-            font=("Segoe UI", 8, "bold"),
-            padx=6,
-            pady=1,
+            title_top, text=f"v{self.installed_version}", bg="#1e293b", fg="#38bdf8",
+            font=("Segoe UI", 8, "bold"), padx=6, pady=1,
         )
         self.lbl_sidebar_version_badge.pack(side="left", padx=(8, 0))
-        tk.Label(
-            title_box,
-            text="Auditoria e Conciliação Contábil (55 / 65)",
-            bg=PALETTE["sb_bg"],
-            fg="#94a3b8",
-            font=("Segoe UI", 8),
-        ).pack(anchor="w")
+        tk.Label(title_box, text="Confira suas vendas: banco × XML × relatório", bg=PALETTE["sb_bg"],
+                 fg="#94a3b8", font=("Segoe UI", 8)).pack(anchor="w")
 
-        # ---------------------------------------------------------------------
-        # PASSO 1: CONEXÃO DO BANCO DE DADOS FIREBIRD (.FDB)
-        # ---------------------------------------------------------------------
-        c1, self.lbl_step1_badge = self._build_sidebar_card(
-            "PASSO 1", "BANCO FIREBIRD (.FDB)", "PRONTO", "#064e3b", "#34d399"
-        )
-
-        r_hp = tk.Frame(c1, bg=PALETTE["sb_card"])
-        r_hp.pack(fill="x", pady=2)
-        tk.Label(r_hp, text="Host:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8), width=5, anchor="w").pack(side="left")
-        self._create_sidebar_entry(r_hp, self.var_db_host, width=14).pack(side="left", padx=(0, 8))
-        tk.Label(r_hp, text="Porta:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8), width=5, anchor="w").pack(side="left")
-        self._create_sidebar_entry(r_hp, self.var_db_port, width=7, justify="center").pack(side="left")
-
-        tk.Label(c1, text="Arquivo .FDB (Clipp 2.5 / 5.0):", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8)).pack(anchor="w", pady=(3, 1))
+        # ---------------- 1. BANCO DO CLIPP ----------------
+        c1, self.lbl_step1_badge = self._build_sidebar_card("1", "Banco de dados do Clipp")
+        self._sb_label(c1, "Arquivo do banco (.FDB):").pack(anchor="w", pady=(0, 2))
         r_f = tk.Frame(c1, bg=PALETTE["sb_card"])
         r_f.pack(fill="x", pady=1)
         self._create_sidebar_entry(r_f, self.var_db_path, width=25).pack(side="left", fill="x", expand=True, padx=(0, 5))
-        ModernButton(
-            r_f, text="...", command=self.browse_sidebar_fdb,
-            bg="#334155", hover_bg="#475569", pady=3, padx=8, font=("Segoe UI", 8, "bold")
-        ).pack(side="right")
+        ModernButton(r_f, text="Procurar", command=self.browse_sidebar_fdb, bg="#334155", hover_bg="#475569",
+                     pady=3, padx=8, font=("Segoe UI", 8, "bold")).pack(side="right")
 
-        r_up = tk.Frame(c1, bg=PALETTE["sb_card"])
-        r_up.pack(fill="x", pady=3)
-        tk.Label(r_up, text="Usuário:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8), width=7, anchor="w").pack(side="left")
-        self._create_sidebar_entry(r_up, self.var_db_user, width=10).pack(side="left", padx=(0, 8))
-        tk.Label(r_up, text="Senha:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8), width=6, anchor="w").pack(side="left")
-        self._create_sidebar_entry(r_up, self.var_db_pass, width=9, show="*").pack(side="left")
+        # Opções avançadas (servidor / usuário / senha) ficam escondidas por padrão
+        self.adv_db_frame = tk.Frame(c1, bg=PALETTE["sb_card"])
+        r_hp = tk.Frame(self.adv_db_frame, bg=PALETTE["sb_card"])
+        r_hp.pack(fill="x", pady=2)
+        tk.Label(r_hp, text="Servidor:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8), width=8, anchor="w").pack(side="left")
+        self._create_sidebar_entry(r_hp, self.var_db_host, width=12).pack(side="left", padx=(0, 6))
+        tk.Label(r_hp, text="Porta:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8)).pack(side="left")
+        self._create_sidebar_entry(r_hp, self.var_db_port, width=6, justify="center").pack(side="left", padx=(4, 0))
+        r_up = tk.Frame(self.adv_db_frame, bg=PALETTE["sb_card"])
+        r_up.pack(fill="x", pady=2)
+        tk.Label(r_up, text="Usuário:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8), width=8, anchor="w").pack(side="left")
+        self._create_sidebar_entry(r_up, self.var_db_user, width=10).pack(side="left", padx=(0, 6))
+        tk.Label(r_up, text="Senha:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8)).pack(side="left")
+        self._create_sidebar_entry(r_up, self.var_db_pass, width=9, show="*").pack(side="left", padx=(4, 0))
 
-        ModernButton(
-            c1,
-            text="Conectar e Sincronizar Base (.FDB)",
-            command=self.connect_and_sync_clipp_database,
-            bg="#1e293b",
-            hover_bg="#334155",
-            fg="#38bdf8",
-            pady=5,
-        ).pack(fill="x", pady=(4, 3))
+        self.lbl_adv_toggle = tk.Label(c1, text="▸ Opções avançadas", bg=PALETTE["sb_card"], fg="#64748b",
+                                       font=("Segoe UI", 8, "underline"), cursor="hand2")
+        self.lbl_adv_toggle.pack(anchor="w", pady=(3, 0))
+        self.lbl_adv_toggle.bind("<Button-1>", lambda _e: self._toggle_advanced_db())
 
-        self.lbl_sidebar_db_status = tk.Label(
-            c1,
-            text="Base configurada. Aplique o período no Passo 2.",
-            bg=PALETTE["sb_card"],
-            fg="#94a3b8",
-            font=("Segoe UI", 8),
-            justify="left",
-            wraplength=295,
-        )
+        self.btn_read_db = ModernButton(c1, text="Ler banco de dados", command=self.connect_and_sync_clipp_database,
+                                        bg="#1e293b", hover_bg="#334155", fg="#38bdf8", pady=5)
+        self.btn_read_db.pack(fill="x", pady=(5, 3))
+        self.lbl_sidebar_db_status = self._sb_label(c1, "Escolha o arquivo e clique em 'Ler banco de dados'.")
+        self.lbl_sidebar_db_status.configure(font=("Segoe UI", 8))
         self.lbl_sidebar_db_status.pack(anchor="w")
 
-        # ---------------------------------------------------------------------
-        # PASSO 2: FILTRO DE PERÍODO / COMPETÊNCIA (OBRIGATÓRIO)
-        # ---------------------------------------------------------------------
-        c2, self.lbl_step2_badge = self._build_sidebar_card(
-            "PASSO 2", "FILTRO DE PERÍODO", "OBRIGATÓRIO", "#78350f", "#fbbf24"
-        )
-
-        tk.Label(
-            c2,
-            text="Informe o período para carregar os valores e liberar a importação dos XMLs:",
-            bg=PALETTE["sb_card"],
-            fg=PALETTE["sb_muted"],
-            font=("Segoe UI", 8),
-            justify="left",
-            wraplength=295,
-        ).pack(anchor="w", pady=(0, 4))
-
+        # ---------------- 2. PERÍODO ----------------
+        c2, self.lbl_step2_badge = self._build_sidebar_card("2", "Período da conferência")
         r_dt = tk.Frame(c2, bg=PALETTE["sb_card"])
         r_dt.pack(fill="x", pady=2)
-        tk.Label(r_dt, text="Início:", bg=PALETTE["sb_card"], fg="#e2e8f0", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 4))
-        self.ent_dt_inicio = self._create_sidebar_entry(r_dt, self.var_dt_inicio, width=11, justify="center", font=("Segoe UI", 9, "bold"))
+        tk.Label(r_dt, text="De", bg=PALETTE["sb_card"], fg="#e2e8f0", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        self.ent_dt_inicio = self._create_sidebar_entry(r_dt, self.var_dt_inicio, width=11, justify="center", font=("Segoe UI", 10, "bold"))
         self.ent_dt_inicio.pack(side="left", padx=(0, 8))
         self._bind_date_mask(self.ent_dt_inicio, self.var_dt_inicio)
         self.ent_dt_inicio.bind("<Return>", lambda e: self.apply_period_filter())
-
-        tk.Label(r_dt, text="Fim:", bg=PALETTE["sb_card"], fg="#e2e8f0", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 4))
-        self.ent_dt_fim = self._create_sidebar_entry(r_dt, self.var_dt_fim, width=11, justify="center", font=("Segoe UI", 9, "bold"))
+        tk.Label(r_dt, text="até", bg=PALETTE["sb_card"], fg="#e2e8f0", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        self.ent_dt_fim = self._create_sidebar_entry(r_dt, self.var_dt_fim, width=11, justify="center", font=("Segoe UI", 10, "bold"))
         self.ent_dt_fim.pack(side="left")
         self._bind_date_mask(self.ent_dt_fim, self.var_dt_fim)
         self.ent_dt_fim.bind("<Return>", lambda e: self.apply_period_filter())
 
-        tk.Label(c2, text="Critério Temporal do Confronto:", bg=PALETTE["sb_card"], fg=PALETTE["sb_muted"], font=("Segoe UI", 8)).pack(anchor="w", pady=(4, 1))
-        rb1 = tk.Radiobutton(
-            c2,
-            text="Por Data de Emissão (tb_nfvenda.dt_emissao)",
-            variable=self.var_date_base,
-            value="issueDate",
-            bg=PALETTE["sb_card"],
-            fg="#f8fafc",
-            selectcolor=PALETTE["sb_input_bg"],
-            activebackground=PALETTE["sb_card"],
-            activeforeground="#38bdf8",
-            font=("Segoe UI", 8, "bold"),
-            command=self._on_date_base_changed,
-        )
-        rb1.pack(anchor="w")
-        rb2 = tk.Radiobutton(
-            c2,
-            text="Por Autorização SEFAZ (tb_nfe.data_hora)",
-            variable=self.var_date_base,
-            value="authDate",
-            bg=PALETTE["sb_card"],
-            fg="#f8fafc",
-            selectcolor=PALETTE["sb_input_bg"],
-            activebackground=PALETTE["sb_card"],
-            activeforeground="#38bdf8",
-            font=("Segoe UI", 8, "bold"),
-            command=self._on_date_base_changed,
-        )
-        rb2.pack(anchor="w")
+        self._sb_label(c2, "Comparar pela data de:").pack(anchor="w", pady=(6, 0))
+        for txt, val in (("Emissão da nota", "issueDate"), ("Autorização na SEFAZ", "authDate")):
+            tk.Radiobutton(
+                c2, text=txt, variable=self.var_date_base, value=val, bg=PALETTE["sb_card"], fg="#f8fafc",
+                selectcolor=PALETTE["sb_input_bg"], activebackground=PALETTE["sb_card"], activeforeground="#38bdf8",
+                font=("Segoe UI", 9), command=self._on_date_base_changed,
+            ).pack(anchor="w")
 
         btn_comp_row = tk.Frame(c2, bg=PALETTE["sb_card"])
-        btn_comp_row.pack(fill="x", pady=(6, 2))
-        self.btn_apply_period = ModernButton(
-            btn_comp_row,
-            text="✓ APLICAR FILTRO DE PERÍODO",
-            command=self.apply_period_filter,
-            bg=PALETTE["blue"],
-            hover_bg=PALETTE["blue_hover"],
-            pady=6,
-            font=("Segoe UI", 9, "bold"),
-        )
+        btn_comp_row.pack(fill="x", pady=(6, 0))
+        self.btn_apply_period = ModernButton(btn_comp_row, text="Aplicar período", command=self.apply_period_filter,
+                                             bg=PALETTE["blue"], hover_bg=PALETTE["blue_hover"], pady=6,
+                                             font=("Segoe UI", 9, "bold"))
         self.btn_apply_period.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ModernButton(btn_comp_row, text="Limpar", command=self.clear_period_filter, bg="#334155", hover_bg="#475569",
+                     pady=6, padx=10, font=("Segoe UI", 8, "bold")).pack(side="right")
 
-        ModernButton(
-            btn_comp_row,
-            text="Zerar",
-            command=self.clear_period_filter,
-            bg="#334155",
-            hover_bg="#475569",
-            pady=6,
-            padx=10,
-            font=("Segoe UI", 8, "bold"),
-        ).pack(side="right")
-
-        # ---------------------------------------------------------------------
-        # PASSO 3: IMPORTAÇÃO DE ARQUIVOS (.ZIP, .RAR, .XML E .PDF)
-        # ---------------------------------------------------------------------
-        c3, self.lbl_step3_badge = self._build_sidebar_card(
-            "PASSO 3", "IMPORTAR XMLs E PDF", "🔒 BLOQUEADO", "#334155", "#94a3b8"
-        )
-
-        self.lbl_step3_lock_hint = tk.Label(
-            c3,
-            text="⚠ Aplique o Filtro de Período no Passo 2 para habilitar a importação dos arquivos XML.",
-            bg=PALETTE["sb_card"],
-            fg="#fbbf24",
-            font=("Segoe UI", 8, "bold"),
-            justify="left",
-            wraplength=295,
-        )
+        # ---------------- 3. ARQUIVOS ----------------
+        c3, self.lbl_step3_badge = self._build_sidebar_card("3", "Arquivos para conferir")
+        self.lbl_step3_lock_hint = self._sb_label(c3, "Se o período estiver vazio, ele é preenchido com as datas dos arquivos.")
+        self.lbl_step3_lock_hint.configure(font=("Segoe UI", 8))
         self.lbl_step3_lock_hint.pack(anchor="w", pady=(0, 5))
 
-        self.btn_import_xml_files = ModernButton(
-            c3,
-            text="📂 Selecionar Arquivo .ZIP, .RAR ou .XML...",
-            command=self.browse_and_import_xmls,
-            bg=PALETTE["emerald"],
-            hover_bg=PALETTE["emerald_hover"],
-            pady=6,
-            enabled=False,
-            disabled_callback=self._warn_period_required,
-        )
-        self.btn_import_xml_files.pack(fill="x", pady=(0, 4))
-
-        sub_xml_row = tk.Frame(c3, bg=PALETTE["sb_card"])
-        sub_xml_row.pack(fill="x", pady=(0, 4))
-        self.btn_import_xml_folder = ModernButton(
-            sub_xml_row,
-            text="📁 Selecionar Pasta de XMLs...",
-            command=self.browse_and_import_xml_folder,
-            bg="#0f766e",
-            hover_bg="#115e59",
-            pady=4,
-            font=("Segoe UI", 8, "bold"),
-            enabled=False,
-            disabled_callback=self._warn_period_required,
-        )
-        self.btn_import_xml_folder.pack(side="left", fill="x", expand=True, padx=(0, 4))
-
-        self.btn_clear_xmls = ModernButton(
-            sub_xml_row,
-            text="Limpar",
-            command=self.clear_imported_xmls,
-            bg="#334155",
-            hover_bg="#475569",
-            pady=4,
-            padx=8,
-            font=("Segoe UI", 8),
-            enabled=False,
-            disabled_callback=self._warn_period_required,
-        )
-        self.btn_clear_xmls.pack(side="right")
-
-        self.lbl_sidebar_xml_status = tk.Label(
-            c3,
-            text="Nenhum lote XML (.zip/.rar) carregado.",
-            bg=PALETTE["sb_card"],
-            fg=PALETTE["sb_muted"],
-            font=("Segoe UI", 8),
-            justify="left",
-            wraplength=295,
-        )
-        self.lbl_sidebar_xml_status.pack(anchor="w", pady=(0, 5))
+        xml_row = tk.Frame(c3, bg=PALETTE["sb_card"])
+        xml_row.pack(fill="x", pady=(0, 2))
+        self.btn_import_xml_files = ModernButton(xml_row, text="XMLs (.zip / .rar / .xml)", command=self.browse_and_import_xmls,
+                                                 bg=PALETTE["emerald"], hover_bg=PALETTE["emerald_hover"], pady=6,
+                                                 font=("Segoe UI", 9, "bold"))
+        self.btn_import_xml_files.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.btn_import_xml_folder = ModernButton(xml_row, text="Pasta", command=self.browse_and_import_xml_folder,
+                                                  bg="#0f766e", hover_bg="#115e59", pady=6, padx=8, font=("Segoe UI", 8, "bold"))
+        self.btn_import_xml_folder.pack(side="left", padx=(0, 4))
+        self.btn_clear_xmls = ModernButton(xml_row, text="✕", command=self.clear_imported_xmls, bg="#334155",
+                                           hover_bg="#475569", pady=6, padx=8, font=("Segoe UI", 8, "bold"))
+        self.btn_clear_xmls.pack(side="left")
+        self.lbl_sidebar_xml_status = self._sb_label(c3, "Nenhum XML carregado.")
+        self.lbl_sidebar_xml_status.configure(font=("Segoe UI", 8))
+        self.lbl_sidebar_xml_status.pack(anchor="w", pady=(0, 6))
 
         pdf_row = tk.Frame(c3, bg=PALETTE["sb_card"])
-        pdf_row.pack(fill="x", pady=(1, 2))
-        self.btn_import_pdf = ModernButton(
-            pdf_row,
-            text="📄 Selecionar Relatório PDF...",
-            command=self.browse_and_import_pdf,
-            bg=PALETTE["indigo"],
-            hover_bg=PALETTE["indigo_hover"],
-            pady=4,
-            font=("Segoe UI", 8, "bold"),
-            enabled=False,
-            disabled_callback=self._warn_period_required,
-        )
+        pdf_row.pack(fill="x", pady=(0, 2))
+        self.btn_import_pdf = ModernButton(pdf_row, text="Relatório de vendas (PDF)", command=self.browse_and_import_pdf,
+                                           bg=PALETTE["indigo"], hover_bg=PALETTE["indigo_hover"], pady=6,
+                                           font=("Segoe UI", 9, "bold"))
         self.btn_import_pdf.pack(side="left", fill="x", expand=True, padx=(0, 4))
-
-        self.btn_clear_pdf = ModernButton(
-            pdf_row,
-            text="Limpar",
-            command=self.clear_imported_pdf,
-            bg="#334155",
-            hover_bg="#475569",
-            pady=4,
-            padx=8,
-            font=("Segoe UI", 8),
-            enabled=False,
-            disabled_callback=self._warn_period_required,
-        )
-        self.btn_clear_pdf.pack(side="right")
-
-        self.lbl_sidebar_pdf_status = tk.Label(
-            c3,
-            text="Nenhum relatório PDF carregado (opcional).",
-            bg=PALETTE["sb_card"],
-            fg=PALETTE["sb_muted"],
-            font=("Segoe UI", 8),
-            justify="left",
-            wraplength=295,
-        )
+        self.btn_clear_pdf = ModernButton(pdf_row, text="✕", command=self.clear_imported_pdf, bg="#334155",
+                                          hover_bg="#475569", pady=6, padx=8, font=("Segoe UI", 8, "bold"))
+        self.btn_clear_pdf.pack(side="left")
+        self.lbl_sidebar_pdf_status = self._sb_label(c3, "Nenhum relatório carregado (opcional).")
+        self.lbl_sidebar_pdf_status.configure(font=("Segoe UI", 8))
         self.lbl_sidebar_pdf_status.pack(anchor="w")
 
-        # ---------------------------------------------------------------------
-        # PASSO 4: EXPORTAÇÃO DE RELATÓRIOS & UTILITÁRIOS
-        # ---------------------------------------------------------------------
-        c4, _ = self._build_sidebar_card("PASSO 4", "EXPORTAÇÃO & RELATÓRIOS")
-
+        # ---------------- 4. EXPORTAR ----------------
+        c4, _ = self._build_sidebar_card("4", "Salvar resultado")
         r_exp = tk.Frame(c4, bg=PALETTE["sb_card"])
         r_exp.pack(fill="x", pady=2)
-        ModernButton(
-            r_exp,
-            text="📊 Exportar Excel (.xlsx)",
-            command=self.export_xlsx_dialog,
-            bg="#1e293b",
-            hover_bg="#334155",
-            fg="#38bdf8",
-            pady=5,
-            font=("Segoe UI", 8, "bold"),
-        ).pack(side="left", fill="x", expand=True, padx=(0, 4))
-        ModernButton(
-            r_exp,
-            text="📑 Exportar PDF",
-            command=self.export_pdf_dialog,
-            bg="#1e293b",
-            hover_bg="#334155",
-            fg="#38bdf8",
-            pady=5,
-            font=("Segoe UI", 8, "bold"),
-        ).pack(side="left", fill="x", expand=True)
+        ModernButton(r_exp, text="Excel (.xlsx)", command=self.export_xlsx_dialog, bg="#1e293b", hover_bg="#334155",
+                     fg="#38bdf8", pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ModernButton(r_exp, text="PDF", command=self.export_pdf_dialog, bg="#1e293b", hover_bg="#334155",
+                     fg="#38bdf8", pady=5, font=("Segoe UI", 9, "bold")).pack(side="left", fill="x", expand=True)
 
-        r_aux = tk.Frame(c4, bg=PALETTE["sb_card"])
-        r_aux.pack(fill="x", pady=(4, 0))
-        self.btn_sidebar_update = ModernButton(
-            r_aux,
-            text=f"🔄 Atualizar (Instalada v{self.installed_version})",
-            command=self.open_version_and_update_dialog,
-            bg="#0284c7",
-            hover_bg="#0369a1",
-            fg="#ffffff",
-            pady=5,
-            font=("Segoe UI", 8, "bold"),
-        )
-        self.btn_sidebar_update.pack(fill="x", pady=(0, 4))
+        web_link = tk.Label(self.sidebar, text="Abrir versão no navegador", bg=PALETTE["sb_bg"], fg="#475569",
+                            font=("Segoe UI", 8, "underline"), cursor="hand2")
+        web_link.pack(side="bottom", anchor="w")
+        web_link.bind("<Button-1>", lambda _e: self.start_and_open_web_ui())
 
-        ModernButton(
-            r_aux,
-            text="Abrir Interface no Navegador Web",
-            command=self.start_and_open_web_ui,
-            bg="#0f172a",
-            hover_bg="#1e293b",
-            fg="#94a3b8",
-            pady=4,
-            font=("Segoe UI", 8),
-        ).pack(fill="x")
+    def _toggle_advanced_db(self) -> None:
+        if self.adv_db_frame.winfo_ismapped():
+            self.adv_db_frame.pack_forget()
+            self.lbl_adv_toggle.configure(text="▸ Opções avançadas")
+        else:
+            self.adv_db_frame.pack(fill="x", before=self.lbl_adv_toggle)
+            self.lbl_adv_toggle.configure(text="▾ Ocultar opções avançadas")
 
     # =========================================================================
     # BARRA DE STATUS SUPERIOR + 5 CARDS KPI EXECUTIVOS
@@ -834,53 +631,23 @@ class ConfereFiscalDesktopApp:
         outer, inner = self._create_surface_card(self.workspace_area, padx=14, pady=8)
         outer.pack(fill="x", pady=(0, 10))
 
-        self.lbl_top_workflow_badge = tk.Label(
-            inner,
-            text="AGUARDANDO FILTRO DE PERÍODO",
-            bg="#fef3c7",
-            fg="#92400e",
-            font=("Segoe UI", 8, "bold"),
-            padx=8,
-            pady=3,
-        )
+        self.lbl_top_workflow_badge = tk.Label(inner, text="SEM PERÍODO", bg="#fef3c7", fg="#92400e",
+                                               font=("Segoe UI", 9, "bold"), padx=8, pady=3)
         self.lbl_top_workflow_badge.pack(side="left", padx=(0, 10))
 
-        self.lbl_overview_scope = tk.Label(
-            inner,
-            text="Valores iniciados zerados (R$ 0,00). Informe a Data Início e a Data Fim no Passo 2 e clique em 'Aplicar Filtro de Período'.",
-            bg=PALETTE["card_bg"],
-            fg=PALETTE["text_primary"],
-            font=("Segoe UI", 9, "bold"),
-        )
-        self.lbl_overview_scope.pack(side="left")
-
-        # Bloco Direito: Versão Instalada vs Publicada + Botão Atualizar
         ver_box = tk.Frame(inner, bg=PALETTE["card_bg"])
         ver_box.pack(side="right")
-
-        self.lbl_top_version_info = tk.Label(
-            ver_box,
-            text=f"Instalada: v{self.installed_version}",
-            bg="#f1f5f9",
-            fg=PALETTE["text_secondary"],
-            font=("Segoe UI", 8, "bold"),
-            padx=8,
-            pady=4,
-        )
+        self.lbl_top_version_info = tk.Label(ver_box, text=f"Versão {self.installed_version}", bg="#f1f5f9",
+                                             fg=PALETTE["text_secondary"], font=("Segoe UI", 8, "bold"), padx=8, pady=4)
         self.lbl_top_version_info.pack(side="left", padx=(0, 6))
-
-        self.btn_check_update = ModernButton(
-            ver_box,
-            text="🔄 Atualizar",
-            command=self.open_version_and_update_dialog,
-            bg=PALETTE["sky"],
-            hover_bg=PALETTE["sky_hover"],
-            fg="#ffffff",
-            padx=12,
-            pady=4,
-            font=("Segoe UI", 8, "bold"),
-        )
+        self.btn_check_update = ModernButton(ver_box, text="Verificar atualização", command=self.open_version_and_update_dialog,
+                                             bg=PALETTE["sky"], hover_bg=PALETTE["sky_hover"], fg="#ffffff", padx=12, pady=4,
+                                             font=("Segoe UI", 8, "bold"))
         self.btn_check_update.pack(side="left")
+
+        self.lbl_overview_scope = tk.Label(inner, text="", bg=PALETTE["card_bg"], fg=PALETTE["text_primary"],
+                                           font=("Segoe UI", 9), anchor="w", justify="left")
+        self.lbl_overview_scope.pack(side="left", fill="x", expand=True)
 
     def _build_top_kpi_bar(self) -> None:
         kpi_bar = tk.Frame(self.workspace_area, bg=PALETTE["app_bg"])
@@ -908,19 +675,22 @@ class ConfereFiscalDesktopApp:
             lbl_val.pack(anchor="w", pady=(3, 2))
             lbl_sub = tk.Label(
                 inner,
-                text="0 notas (Aplique o período)",
+                text="—",
                 bg=PALETTE["card_bg"],
                 fg=PALETTE["text_muted"],
                 font=("Segoe UI", 8),
+                justify="left",
+                anchor="w",
+                wraplength=210,
             )
             lbl_sub.pack(anchor="w")
             return lbl_val, lbl_sub
 
-        self.kpi_bco_emi_val, self.kpi_bco_emi_sub = _make_kpi(0, "TOTAL BANCO (POR EMISSÃO)", PALETTE["blue"])
-        self.kpi_bco_aut_val, self.kpi_bco_aut_sub = _make_kpi(1, "TOTAL BANCO (POR AUTORIZAÇÃO)", PALETTE["sky"])
-        self.kpi_xml_val, self.kpi_xml_sub = _make_kpi(2, "TOTAL XMLs IMPORTADOS (.ZIP/.RAR)", PALETTE["indigo"])
-        self.kpi_pdf_val, self.kpi_pdf_sub = _make_kpi(3, "TOTAL RELATÓRIO PDF", PALETTE["amber"])
-        self.kpi_bat_val, self.kpi_bat_sub = _make_kpi(4, "STATUS DE BATIMENTO", PALETTE["emerald"])
+        self.kpi_bco_emi_val, self.kpi_bco_emi_sub = _make_kpi(0, "BANCO • POR EMISSÃO", PALETTE["blue"])
+        self.kpi_bco_aut_val, self.kpi_bco_aut_sub = _make_kpi(1, "BANCO • POR AUTORIZAÇÃO", PALETTE["sky"])
+        self.kpi_xml_val, self.kpi_xml_sub = _make_kpi(2, "XMLs IMPORTADOS", PALETTE["indigo"])
+        self.kpi_pdf_val, self.kpi_pdf_sub = _make_kpi(3, "RELATÓRIO PDF", PALETTE["amber"])
+        self.kpi_bat_val, self.kpi_bat_sub = _make_kpi(4, "RESULTADO", PALETTE["emerald"])
 
     # =========================================================================
     # BARRA DE NAVEGAÇÃO MODERNA E PÁGINAS DE CONTEÚDO
@@ -933,12 +703,11 @@ class ConfereFiscalDesktopApp:
         nav_bar.pack(fill="x")
 
         tabs_spec = [
-            ("overview", "1. Visão Geral & Comparativo Triplo"),
-            ("nfe55", "2. Conciliação NF-e (Modelo 55)"),
-            ("nfce65", "3. Conciliação NFC-e (Modelo 65)"),
-            ("events", "4. Canceladas e Inutilizadas (101/102)"),
-            ("divergences", "5. Divergências e Faltantes"),
-            ("sql", "6. Console SQL (Banco)"),
+            ("overview", "Resumo"),
+            ("divergences", "Diferenças encontradas"),
+            ("nfe55", "NF-e (modelo 55)"),
+            ("nfce65", "NFC-e (modelo 65)"),
+            ("events", "Canceladas e inutilizadas"),
         ]
 
         for key, label in tabs_spec:
@@ -976,7 +745,6 @@ class ConfereFiscalDesktopApp:
         self._build_tab_model(self.tab_frames["nfce65"], "65", "NFC-e Modelo 65")
         self._build_tab_events(self.tab_frames["events"])
         self._build_tab_divergences(self.tab_frames["divergences"])
-        self._build_tab_sql_and_local_db(self.tab_frames["sql"])
 
         self.switch_main_tab("overview")
 
@@ -1007,30 +775,24 @@ class ConfereFiscalDesktopApp:
 
         tk.Label(
             tc_inner,
-            text="Comparativo Triplo por Modelo Fiscal: Banco (tb_nfvenda / tb_nfe) vs. Lote XML (.zip/.rar) vs. Relatório PDF",
+            text="Totais por tipo de nota: banco do Clipp × XMLs × relatório PDF",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
         ).pack(anchor="w", pady=(0, 8))
 
-        cols_tc = (
-            "label", "qtdBcoEmi", "totBcoEmi", "qtdBcoAut", "totBcoAut",
-            "divD1", "qtdXml", "totXml", "qtdPdf", "totPdf", "difBcoXml", "status",
-        )
+        cols_tc = ("label", "qtdBco", "totBco", "qtdXml", "totXml", "qtdPdf", "totPdf", "difBcoXml", "status")
         self.tree_triple = ttk.Treeview(tc_inner, columns=cols_tc, show="headings", height=4, style="Executive.Treeview")
         for c, lbl, w, anc in [
-            ("label", "Modelo Fiscal", 180, "w"),
-            ("qtdBcoEmi", "Notas Bco (Emi)", 95, "center"),
-            ("totBcoEmi", "Total Banco Emissão", 125, "e"),
-            ("qtdBcoAut", "Notas Bco (Aut)", 95, "center"),
-            ("totBcoAut", "Total Banco Autoriz.", 125, "e"),
-            ("divD1", "Diferença D+1", 105, "e"),
-            ("qtdXml", "Qtd XML", 75, "center"),
-            ("totXml", "Total XML (.zip/.rar)", 125, "e"),
-            ("qtdPdf", "Qtd PDF", 75, "center"),
-            ("totPdf", "Total PDF", 110, "e"),
-            ("difBcoXml", "Dif. Banco vs XML", 115, "e"),
-            ("status", "Situação da Conciliação", 180, "w"),
+            ("label", "Tipo de nota", 170, "w"),
+            ("qtdBco", "Notas no banco", 105, "center"),
+            ("totBco", "Total no banco", 130, "e"),
+            ("qtdXml", "Notas XML", 90, "center"),
+            ("totXml", "Total XML", 130, "e"),
+            ("qtdPdf", "Notas PDF", 90, "center"),
+            ("totPdf", "Total PDF", 130, "e"),
+            ("difBcoXml", "Diferença banco × XML", 150, "e"),
+            ("status", "Situação", 200, "w"),
         ]:
             self.tree_triple.heading(c, text=lbl)
             self.tree_triple.column(c, width=w, anchor=anc)
@@ -1043,7 +805,7 @@ class ConfereFiscalDesktopApp:
 
         self.lbl_d1_header = tk.Label(
             d1_inner,
-            text="Desafio Temporal (D+1 / Contingência): Notas emitidas em um dia e autorizadas na SEFAZ em dia posterior",
+            text="Notas emitidas num dia e autorizadas na SEFAZ em outro dia",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
@@ -1053,14 +815,14 @@ class ConfereFiscalDesktopApp:
         cols_d1 = ("nf_numero", "nf_modelo", "nf_serie", "id_nfe", "dt_emissao", "data_hora_sefaz", "status_des", "valor")
         self.tree_d1 = ttk.Treeview(d1_inner, columns=cols_d1, show="headings", height=12, style="Executive.Treeview")
         for c, lbl, w, anc in [
-            ("nf_numero", "Nº Nota (nf_numero)", 110, "center"),
+            ("nf_numero", "Nº da nota", 95, "center"),
             ("nf_modelo", "Modelo", 65, "center"),
             ("nf_serie", "Série", 55, "center"),
-            ("id_nfe", "Chave de Acesso 44 dígitos (id_nfe)", 315, "w"),
-            ("dt_emissao", "Data Emissão (tb_nfvenda)", 140, "center"),
-            ("data_hora_sefaz", "Autorização SEFAZ (tb_nfe)", 165, "center"),
-            ("status_des", "Status SEFAZ (status_des)", 220, "w"),
-            ("valor", "Valor da Nota", 120, "e"),
+            ("id_nfe", "Chave de acesso", 315, "w"),
+            ("dt_emissao", "Emissão", 100, "center"),
+            ("data_hora_sefaz", "Autorização", 150, "center"),
+            ("status_des", "Situação na SEFAZ", 220, "w"),
+            ("valor", "Valor", 110, "e"),
         ]:
             self.tree_d1.heading(c, text=lbl)
             self.tree_d1.column(c, width=w, anchor=anc)
@@ -1079,7 +841,7 @@ class ConfereFiscalDesktopApp:
 
         lbl_summary = tk.Label(
             top_inner,
-            text=f"{model_label}: Valores zerados (R$ 0,00). Aplique o filtro de período no Passo 2.",
+            text=f"{model_label}: informe o período para ver os dados.",
             bg=PALETTE["card_sub_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 9, "bold"),
@@ -1099,9 +861,9 @@ class ConfereFiscalDesktopApp:
         sub_labels: Dict[str, tk.Label] = {}
 
         sub_specs = [
-            ("cfop", f"📊 1. Tabela Dinâmica por CFOP ({model_label})"),
-            ("ncm", f"🏷️ 2. Tabela Dinâmica por NCM ({model_label})"),
-            ("docs", f"📑 3. Relação de Notas Fiscais — {model_label} (Status 100)"),
+            ("docs", "Lista de notas"),
+            ("cfop", "Totais por CFOP"),
+            ("ncm", "Totais por NCM"),
         ]
 
         def _switch_sub(sub_key: str) -> None:
@@ -1140,7 +902,7 @@ class ConfereFiscalDesktopApp:
         # --- SUB-VISÃO 1: TABELA DINÂMICA POR CFOP (LARGURA TOTAL) ---
         tk.Label(
             sub_cfop,
-            text=f"Agrupamento Fiscal por CFOP — {model_label}: Somatório de Base de Cálculo ICMS, Valor ICMS e Valor Contábil (Banco vs. XML)",
+            text=f"{model_label} — totais por CFOP (banco × XML)",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
@@ -1176,7 +938,7 @@ class ConfereFiscalDesktopApp:
         # --- SUB-VISÃO 2: TABELA DINÂMICA POR NCM (LARGURA TOTAL) ---
         tk.Label(
             sub_ncm,
-            text=f"Agrupamento Fiscal por NCM — {model_label}: Somatório de Base de Cálculo e Valor Contábil por Classificação NCM",
+            text=f"{model_label} — totais por NCM (banco × XML)",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
@@ -1212,7 +974,7 @@ class ConfereFiscalDesktopApp:
         filter_bar.pack(fill="x", pady=(0, 8))
         tk.Label(
             filter_bar,
-            text=f"Relação de Notas Autorizadas (Status 100) — {model_label}:",
+            text=f"Notas autorizadas — {model_label}",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
@@ -1221,7 +983,7 @@ class ConfereFiscalDesktopApp:
         search_var = self.var_search_55 if model_code == "55" else self.var_search_65
         ModernButton(
             filter_bar,
-            text="Limpar Busca",
+            text="Limpar",
             command=lambda sv=search_var, mc=model_code: (sv.set(""), self._populate_model_tab(mc, self.last_db_audit_data)),
             bg="#e2e8f0",
             hover_bg="#cbd5e1",
@@ -1246,7 +1008,7 @@ class ConfereFiscalDesktopApp:
         )
         ent_s.pack(side="right", padx=6)
         ent_s.bind("<KeyRelease>", lambda _e, mc=model_code: self._populate_model_tab(mc, self.last_db_audit_data))
-        tk.Label(filter_bar, text="Filtrar por Nº ou Chave:", bg=PALETTE["card_bg"], fg=PALETTE["text_muted"], font=("Segoe UI", 9)).pack(side="right")
+        tk.Label(filter_bar, text="Buscar nº ou chave:", bg=PALETTE["card_bg"], fg=PALETTE["text_muted"], font=("Segoe UI", 9)).pack(side="right")
 
         cols_doc = (
             "nf_numero", "nf_serie", "id_nfe", "dt_emissao", "data_hora_sefaz",
@@ -1254,16 +1016,16 @@ class ConfereFiscalDesktopApp:
         )
         tree_docs = ttk.Treeview(sub_docs, columns=cols_doc, show="headings", height=15, style="Executive.Treeview")
         for c, lbl, w, anc in [
-            ("nf_numero", "Nº Nota (nf_numero)", 110, "center"),
+            ("nf_numero", "Nº da nota", 95, "center"),
             ("nf_serie", "Série", 55, "center"),
-            ("id_nfe", "Chave de Acesso 44 dígitos (id_nfe)", 305, "w"),
-            ("dt_emissao", "Data Emissão", 100, "center"),
-            ("data_hora_sefaz", "Autorização SEFAZ", 145, "center"),
+            ("id_nfe", "Chave de acesso", 305, "w"),
+            ("dt_emissao", "Emissão", 100, "center"),
+            ("data_hora_sefaz", "Autorização", 145, "center"),
             ("cfop", "CFOP", 65, "center"),
             ("base_icms", "Base ICMS", 105, "e"),
             ("valor_icms", "Vlr ICMS", 95, "e"),
             ("valor", "Valor Total", 110, "e"),
-            ("status_conciliacao", "Confronto com XML", 180, "w"),
+            ("status_conciliacao", "Tem XML?", 180, "w"),
         ]:
             tree_docs.heading(c, text=lbl)
             tree_docs.column(c, width=w, anchor=anc)
@@ -1273,7 +1035,7 @@ class ConfereFiscalDesktopApp:
         tree_docs.pack(side="left", fill="both", expand=True)
         vsb_docs.pack(side="right", fill="y")
 
-        _switch_sub("cfop")
+        _switch_sub("docs")
 
         if model_code == "55":
             self.lbl_sum_55 = lbl_summary
@@ -1295,7 +1057,7 @@ class ConfereFiscalDesktopApp:
 
         self.lbl_events_summary = tk.Label(
             h_inner,
-            text="Aba Exclusiva: Canceladas (Status 101) e Inutilizadas (Status 102) — Isoladas do Faturamento Líquido (Status 100)",
+            text="Notas canceladas e numerações inutilizadas (não entram no faturamento)",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
@@ -1305,9 +1067,9 @@ class ConfereFiscalDesktopApp:
         filter_box = tk.Frame(h_inner, bg=PALETTE["card_bg"])
         filter_box.pack(side="right")
         for lbl, val in [
-            ("Todos Eventos (101 + 102)", "ALL"),
-            ("Somente Canceladas (101)", "101"),
-            ("Somente Inutilizadas (102)", "102"),
+            ("Todas", "ALL"),
+            ("Canceladas", "101"),
+            ("Inutilizadas", "102"),
         ]:
             tk.Radiobutton(
                 filter_box,
@@ -1331,17 +1093,17 @@ class ConfereFiscalDesktopApp:
         )
         self.tree_events = ttk.Treeview(g_inner, columns=cols_ev, show="headings", height=18, style="Executive.Treeview")
         for c, lbl, w, anc in [
-            ("status_codigo", "Cód.", 55, "center"),
-            ("status", "Tipo Evento", 95, "center"),
-            ("nf_numero", "nf_numero", 85, "center"),
+            ("status_codigo", "Código", 60, "center"),
+            ("status", "Tipo", 95, "center"),
+            ("nf_numero", "Nº da nota", 90, "center"),
             ("nf_serie", "Série", 50, "center"),
-            ("nf_modelo", "Mod", 50, "center"),
-            ("id_nfe", "id_nfe (Chave de Acesso 44 dígitos)", 295, "w"),
-            ("dt_emissao", "dt_emissao", 95, "center"),
-            ("data_hora_sefaz", "data_hora SEFAZ", 145, "center"),
-            ("status_des", "status_des (Motivo / Protocolo)", 220, "w"),
-            ("valor", "Valor (R$)", 100, "e"),
-            ("fontes", "Presença nas Fontes", 145, "center"),
+            ("nf_modelo", "Modelo", 60, "center"),
+            ("id_nfe", "Chave de acesso", 295, "w"),
+            ("dt_emissao", "Emissão", 95, "center"),
+            ("data_hora_sefaz", "Data na SEFAZ", 145, "center"),
+            ("status_des", "Motivo", 220, "w"),
+            ("valor", "Valor", 100, "e"),
+            ("fontes", "Encontrada em", 145, "center"),
         ]:
             self.tree_events.heading(c, text=lbl)
             self.tree_events.column(c, width=w, anchor=anc)
@@ -1362,7 +1124,7 @@ class ConfereFiscalDesktopApp:
         head_row.pack(fill="x", pady=(0, 6))
         self.lbl_matrix_summary = tk.Label(
             head_row,
-            text="Matriz de Divergências & Auditoria de Chaves (nf_numero, id_nfe, dt_emissao, data_hora_sefaz, status_des, Valor, Origem da Falha)",
+            text="Diferenças encontradas",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
@@ -1384,17 +1146,17 @@ class ConfereFiscalDesktopApp:
         )
         ent_ms.pack(side="right", padx=4)
         ent_ms.bind("<KeyRelease>", lambda _e: self._populate_divergence_matrix_tree())
-        tk.Label(head_row, text="Buscar Nº ou Chave:", bg=PALETTE["card_bg"], fg=PALETTE["text_muted"], font=("Segoe UI", 9)).pack(side="right")
+        tk.Label(head_row, text="Buscar nº ou chave:", bg=PALETTE["card_bg"], fg=PALETTE["text_muted"], font=("Segoe UI", 9)).pack(side="right")
 
         f_row = tk.Frame(t_inner, bg=PALETTE["card_bg"])
         f_row.pack(fill="x")
         for lbl, code in [
-            ("Todas Divergências", "ALL"),
-            ("Consta no Relatório mas NÃO no XML", "RELATORIO_SEM_XML"),
-            ("Consta no XML mas NÃO no Relatório/Banco", "XML_SEM_RELATORIO_OU_BANCO"),
-            ("Consta no Banco mas sem XML", "BANCO_SEM_XML"),
-            ("Desafio Temporal D+1", "DIVERGENCIA_D_MAIS_1"),
-            ("Divergência de Valor / Chave", "OUTRAS"),
+            ("Todas", "ALL"),
+            ("No relatório, sem XML", "RELATORIO_SEM_XML"),
+            ("No XML, fora do banco/relatório", "XML_SEM_RELATORIO_OU_BANCO"),
+            ("No banco, sem XML", "BANCO_SEM_XML"),
+            ("Autorizada em outro dia", "DIVERGENCIA_D_MAIS_1"),
+            ("Valor ou chave diferente", "OUTRAS"),
         ]:
             tk.Radiobutton(
                 f_row,
@@ -1405,27 +1167,23 @@ class ConfereFiscalDesktopApp:
                 fg=PALETTE["text_primary"],
                 selectcolor="#f1f5f9",
                 activebackground=PALETTE["card_bg"],
-                font=("Segoe UI", 8, "bold"),
+                font=("Segoe UI", 9),
                 command=self._populate_divergence_matrix_tree,
             ).pack(side="left", padx=5)
 
         g_outer, g_inner = self._create_surface_card(parent, padx=12, pady=10)
         g_outer.pack(fill="both", expand=True)
 
-        cols_mv = (
-            "nf_numero", "nf_modelo", "id_nfe", "dt_emissao",
-            "data_hora_sefaz", "status_des", "valor", "origem_falha",
-        )
+        cols_mv = ("origem_falha", "nf_numero", "nf_modelo", "valor", "dt_emissao", "data_hora_sefaz", "id_nfe")
         self.tree_matrix = ttk.Treeview(g_inner, columns=cols_mv, show="headings", height=18, style="Executive.Treeview")
         for c, lbl, w, anc in [
-            ("nf_numero", "nf_numero", 85, "center"),
-            ("nf_modelo", "Mod", 50, "center"),
-            ("id_nfe", "id_nfe (Chave 44 dígitos)", 295, "w"),
-            ("dt_emissao", "dt_emissao", 95, "center"),
-            ("data_hora_sefaz", "data_hora_sefaz", 145, "center"),
-            ("status_des", "status_des", 195, "w"),
-            ("valor", "Valor (R$)", 100, "e"),
-            ("origem_falha", "Origem da Falha", 365, "w"),
+            ("origem_falha", "O que aconteceu", 330, "w"),
+            ("nf_numero", "Nº da nota", 80, "center"),
+            ("nf_modelo", "Modelo", 55, "center"),
+            ("valor", "Valor", 95, "e"),
+            ("dt_emissao", "Emissão", 90, "center"),
+            ("data_hora_sefaz", "Autorização", 135, "center"),
+            ("id_nfe", "Chave de acesso", 290, "w"),
         ]:
             self.tree_matrix.heading(c, text=lbl)
             self.tree_matrix.column(c, width=w, anchor=anc)
@@ -1524,41 +1282,33 @@ class ConfereFiscalDesktopApp:
 
     def _warn_period_required(self) -> None:
         messagebox.showwarning(
-            "Filtro de Período Obrigatório (Passo 2)",
-            "Para habilitar a importação dos arquivos XML (.zip, .rar, .xml) e realizar a comparação correta:\n\n"
-            "1. Informe a Data Inicial (Início) e a Data Final (Fim) no PASSO 2 (ex.: 01/10/2026 a 31/10/2026).\n"
-            "2. Clique no botão '✓ APLICAR FILTRO DE PERÍODO'.",
+            "Informe o período",
+            "Informe o período no passo 2 (ex.: 01/10/2026 até 31/10/2026) e clique em 'Aplicar período'.\n\n"
+            "Dica: ao importar o relatório PDF ou os XMLs, o período é preenchido sozinho.",
         )
         self.ent_dt_inicio.focus_set()
 
-    def _update_step2_and_step3_lock_ui(self) -> None:
-        if self.period_filter_applied and self.applied_dt_inicio_iso and self.applied_dt_fim_iso:
-            br_ini = _fmt_date_br(self.applied_dt_inicio_iso)
-            br_fim = _fmt_date_br(self.applied_dt_fim_iso)
+    def _auto_period_from_dates(self, dates: List[str], origem: str) -> None:
+        """Se nenhum período foi aplicado, usa a menor e a maior data dos arquivos importados."""
+        if self.period_filter_applied:
+            return
+        valid = sorted(d for d in (normalize_iso_date(str(x)) for x in dates if x) if d and len(d) == 10)
+        if not valid:
+            return
+        self.var_dt_inicio.set(_fmt_date_br(valid[0]))
+        self.var_dt_fim.set(_fmt_date_br(valid[-1]))
+        self.apply_period_filter()
+        self.lbl_step3_lock_hint.configure(
+            text=f"Período preenchido com as datas do {origem}: {_fmt_date_br(valid[0])} até {_fmt_date_br(valid[-1])}.",
+            fg="#34d399",
+        )
 
-            self.lbl_step2_badge.configure(text="✓ ATIVO", bg="#064e3b", fg="#34d399")
-            self.lbl_step3_badge.configure(text="🔓 LIBERADO", bg="#064e3b", fg="#34d399")
-            self.lbl_step3_lock_hint.configure(
-                text=f"✓ Período {br_ini} a {br_fim} ativo. Importação de XMLs e PDF habilitada!",
-                fg="#34d399",
-            )
-            self.btn_import_xml_files.set_enabled(True)
-            self.btn_import_xml_folder.set_enabled(True)
-            self.btn_clear_xmls.set_enabled(True)
-            self.btn_import_pdf.set_enabled(True)
-            self.btn_clear_pdf.set_enabled(True)
+    def _update_step2_and_step3_lock_ui(self) -> None:
+        """Importação nunca fica bloqueada; aqui só atualizamos os indicadores do período."""
+        if self.period_filter_applied and self.applied_dt_inicio_iso and self.applied_dt_fim_iso:
+            self.lbl_step2_badge.configure(text="✓ OK", bg="#064e3b", fg="#34d399", padx=5)
         else:
-            self.lbl_step2_badge.configure(text="OBRIGATÓRIO", bg="#78350f", fg="#fbbf24")
-            self.lbl_step3_badge.configure(text="🔒 BLOQUEADO", bg="#334155", fg="#94a3b8")
-            self.lbl_step3_lock_hint.configure(
-                text="⚠ Aplique o Filtro de Período no Passo 2 para habilitar a importação dos arquivos XML.",
-                fg="#fbbf24",
-            )
-            self.btn_import_xml_files.set_enabled(False)
-            self.btn_import_xml_folder.set_enabled(False)
-            self.btn_clear_xmls.set_enabled(False)
-            self.btn_import_pdf.set_enabled(False)
-            self.btn_clear_pdf.set_enabled(False)
+            self.lbl_step2_badge.configure(text="", bg=PALETTE["sb_card"], padx=0)
 
     def apply_period_filter(self) -> None:
         raw_ini = self.var_dt_inicio.get().strip()
@@ -1568,9 +1318,8 @@ class ConfereFiscalDesktopApp:
 
         if not dt_ini or not dt_fim or len(dt_ini) != 10 or len(dt_fim) != 10:
             messagebox.showwarning(
-                "Informe o Período Completo",
-                "Informe uma Data Inicial e uma Data Final válidas no formato DD/MM/AAAA\n"
-                "(por exemplo: Início 01/10/2026 e Fim 31/10/2026) antes de aplicar o filtro.",
+                "Período incompleto",
+                "Informe as duas datas no formato DD/MM/AAAA (ex.: 01/10/2026 até 31/10/2026).",
             )
             return
 
@@ -1599,14 +1348,14 @@ class ConfereFiscalDesktopApp:
                     tot_sum = float(cur.fetchone()[0] or 0.0)
                 if nfv_count <= 15 or tot_sum <= 0.0 or os.path.normcase(active_db) != os.path.normcase(fdb_path):
                     self.lbl_sidebar_db_status.config(
-                        text="Carregando valores da base Firebird (.FDB) para o período...",
+                        text="Lendo o banco de dados...",
                         fg="#38bdf8",
                     )
                     self.root.update_idletasks()
                     res = self.db.sync_clipp_fdb_to_local(fdb_path)
                     if res.get("ok"):
                         self.lbl_sidebar_db_status.config(
-                            text=f"✓ Base sincronizada ({res['totalSalesSynced']} registros). Período ativo aplicado.",
+                            text=f"✓ Banco lido: {res['totalSalesSynced']} notas.",
                             fg="#34d399",
                         )
 
@@ -1630,7 +1379,7 @@ class ConfereFiscalDesktopApp:
     def browse_sidebar_fdb(self) -> None:
         path = filedialog.askopenfilename(
             initialdir=self.last_browse_dir,
-            title="Selecionar Base Firebird (.FDB / .GDB)",
+            title="Selecionar o banco do Clipp (.FDB)",
             filetypes=[("Base Firebird (.fdb, .gdb)", "*.fdb *.FDB *.gdb *.GDB"), ("Todos os arquivos", "*.*")],
         )
         if path:
@@ -1641,77 +1390,52 @@ class ConfereFiscalDesktopApp:
     def connect_and_sync_clipp_database(self) -> None:
         fdb_path = self.var_db_path.get().strip()
         if not fdb_path or not os.path.exists(fdb_path):
-            messagebox.showwarning("Base não encontrada", f"O arquivo informado não foi encontrado:\n{fdb_path}")
+            messagebox.showwarning("Arquivo não encontrado", f"Não encontrei o arquivo do banco:\n{fdb_path}\n\nClique em 'Procurar' para escolher o arquivo .FDB do Clipp.")
             return
-        self.lbl_sidebar_db_status.config(text="Sincronizando registros de tb_nfvenda e tb_nfe...", fg="#38bdf8")
+        self.lbl_sidebar_db_status.config(text="Lendo o banco de dados...", fg="#38bdf8")
         self.root.update_idletasks()
         res = self.db.sync_clipp_fdb_to_local(fdb_path)
         if not res.get("ok"):
             ods = inspect_fdb_ods_header(fdb_path)
             if ods and ods.get("validHeader"):
                 self.lbl_sidebar_db_status.config(
-                    text=f"✓ Base conectada ({ods['detectedVersion']}). Aplique o período no Passo 2.",
+                    text=f"✓ Banco conectado ({ods['detectedVersion']}).",
                     fg="#34d399",
                 )
                 self.refresh_all_views()
                 return
-            messagebox.showerror("Erro ao Ler Base", res.get("error", "Falha desconhecida"))
+            messagebox.showerror("Não foi possível ler o banco", res.get("error", "Falha desconhecida"))
             return
 
         self.lbl_sidebar_db_status.config(
             text=(
-                f"✓ Base sincronizada ({res['totalSalesSynced']} registros). "
-                + ("Período ativo aplicado." if self.period_filter_applied else "Aplique o período no Passo 2.")
+                f"✓ Banco lido: {res['totalSalesSynced']} notas."
             ),
             fg="#34d399",
         )
         self.refresh_all_views()
         messagebox.showinfo(
-            "Base Firebird Sincronizada",
-            f"Conexão e leitura da base concluídas com sucesso!\n\n"
-            f"• Arquivo: {fdb_path}\n"
-            f"• Documentos na base: {res['totalSalesSynced']}\n\n"
-            + (
-                "Os valores do período filtrado já foram atualizados."
-                if self.period_filter_applied
-                else "Os valores na tela permanecem zerados até que você aplique o Filtro de Período no Passo 2."
-            ),
+            "Banco lido",
+            f"Banco de dados lido com sucesso.\n\n• Arquivo: {fdb_path}\n• Notas encontradas: {res['totalSalesSynced']}"
+            + ("" if self.period_filter_applied else "\n\nAgora informe o período (passo 2) ou importe o relatório/XMLs."),
         )
 
     def _finalize_xml_import(self, new_entries: List[Dict[str, Any]], new_errors: List[Dict[str, str]], source_label: str) -> None:
-        if not self.period_filter_applied:
-            self._warn_period_required()
-            return
-
         if not new_entries and new_errors:
             err_msg = "\n".join(f"• {e.get('fileName', '')}: {e.get('error') or e.get('message', '')}" for e in new_errors[:8])
-            messagebox.showerror(
-                "Não foi possível extrair XMLs",
-                f"Nenhum arquivo XML válido foi encontrado em:\n{source_label}\n\nDetalhes:\n{err_msg}",
-            )
+            messagebox.showerror("Nenhum XML encontrado", f"Não encontrei XMLs válidos em:\n{source_label}\n\nDetalhes:\n{err_msg}")
             return
-
         if not new_entries:
-            messagebox.showwarning(
-                "Nenhum XML encontrado",
-                f"O pacote ou pasta selecionada não contém arquivos .xml fiscais:\n{source_label}",
-            )
+            messagebox.showwarning("Nenhum XML encontrado", f"O arquivo ou pasta selecionada não tem XMLs de notas:\n{source_label}")
             return
 
-        if self.xml_entries:
-            append = messagebox.askyesno(
-                "Lote XML já carregado",
-                f"Já existem {len(self.xml_documents)} documentos XML carregados.\n\n"
-                f"Deseja SOMAR este novo pacote ({source_label}) aos XMLs atuais?\n"
-                f"• Clique em SIM para somar (ex.: juntar lote NF-e 55 com lote NFC-e 65)\n"
-                f"• Clique em NÃO para substituir pelo novo lote",
-            )
-            if append:
-                self.xml_entries.extend(new_entries)
-                self.loaded_archive_names.append(source_label)
-            else:
-                self.xml_entries = list(new_entries)
-                self.loaded_archive_names = [source_label]
+        if self.xml_entries and messagebox.askyesno(
+            "Já existem XMLs carregados",
+            f"Já existem {len(self.xml_documents)} notas carregadas.\n\n"
+            f"SIM = juntar com os XMLs atuais\nNÃO = substituir pelos novos",
+        ):
+            self.xml_entries.extend(new_entries)
+            self.loaded_archive_names.append(source_label)
         else:
             self.xml_entries = list(new_entries)
             self.loaded_archive_names = [source_label]
@@ -1723,43 +1447,35 @@ class ConfereFiscalDesktopApp:
         s = self.xml_summary
 
         self.lbl_sidebar_xml_status.config(
-            text=(
-                f"✓ {s['totalDocumentsParsed']} XMLs lidos | "
-                f"55: {s['nfe55Count']} ({_fmt_brl(s['nfe55TotalValue'])}) | "
-                f"65: {s['nfce65Count']} ({_fmt_brl(s['nfce65TotalValue'])})"
-            ),
+            text=(f"✓ {s['totalDocumentsParsed']} XMLs lidos\n"
+                  f"NF-e: {s['nfe55Count']} ({_fmt_brl(s['nfe55TotalValue'])})  •  NFC-e: {s['nfce65Count']} ({_fmt_brl(s['nfce65TotalValue'])})"),
             fg="#34d399",
         )
 
-        self.refresh_all_views()
+        dates = [d.get("issueDate") for d in self.xml_documents]
+        if self.period_filter_applied:
+            self.refresh_all_views()
+        else:
+            self._auto_period_from_dates(dates, "XML")
 
         min_d = s.get("minIssueDate") or s.get("minAuthDate")
         max_d = s.get("maxIssueDate") or s.get("maxAuthDate")
-        br_ini = _fmt_date_br(self.applied_dt_inicio_iso)
-        br_fim = _fmt_date_br(self.applied_dt_fim_iso)
-
         messagebox.showinfo(
-            "Lote XML (.ZIP / .RAR / .XML) Importado",
-            f"Importação e confronto concluídos no período {br_ini} a {br_fim}!\n\n"
-            f"• Origem: {', '.join(self.loaded_archive_names)}\n"
-            f"• Total de XMLs extraídos do pacote: {s['totalFilesExtracted']}\n"
-            f"• Datas encontradas nos XMLs: {_fmt_date_br(min_d)} a {_fmt_date_br(max_d)}\n\n"
-            f"• NF-e (Modelo 55 Autorizadas no pacote): {s['nfe55Count']} notas — {_fmt_brl(s['nfe55TotalValue'])}\n"
-            f"• NFC-e (Modelo 65 Autorizadas no pacote): {s['nfce65Count']} notas — {_fmt_brl(s['nfce65TotalValue'])}\n"
-            f"• Canceladas (Status 101): {s['canceledCount']} | Inutilizadas (102): {s['inutilizedCount']}",
+            "XMLs importados",
+            f"Origem: {', '.join(self.loaded_archive_names)}\n\n"
+            f"• Arquivos XML lidos: {s['totalFilesExtracted']}\n"
+            f"• Datas das notas: {_fmt_date_br(min_d)} até {_fmt_date_br(max_d)}\n\n"
+            f"• NF-e (modelo 55) autorizadas: {s['nfe55Count']} — {_fmt_brl(s['nfe55TotalValue'])}\n"
+            f"• NFC-e (modelo 65) autorizadas: {s['nfce65Count']} — {_fmt_brl(s['nfce65TotalValue'])}\n"
+            f"• Canceladas: {s['canceledCount']}  •  Inutilizadas: {s['inutilizedCount']}",
         )
 
     def browse_and_import_xmls(self) -> None:
-        if not self.period_filter_applied:
-            self._warn_period_required()
-            return
         paths = filedialog.askopenfilenames(
             initialdir=self.last_browse_dir,
-            title="Selecionar Arquivos .ZIP, .RAR ou .XML (NF-e 55 / NFC-e 65)",
+            title="Selecionar XMLs (.zip, .rar ou .xml)",
             filetypes=[
-                ("Lotes Fiscais (.zip, .rar, .xml)", "*.zip *.ZIP *.rar *.RAR *.xml *.XML"),
-                ("Arquivos Compactados (.zip, .rar)", "*.zip *.ZIP *.rar *.RAR"),
-                ("Arquivos XML (*.xml)", "*.xml *.XML"),
+                ("XMLs e pacotes (.zip, .rar, .xml)", "*.zip *.ZIP *.rar *.RAR *.xml *.XML"),
                 ("Todos os arquivos (*.*)", "*.*"),
             ],
         )
@@ -1774,13 +1490,7 @@ class ConfereFiscalDesktopApp:
         self._finalize_xml_import(ext["xmlEntries"], ext["extractionErrors"], label)
 
     def browse_and_import_xml_folder(self) -> None:
-        if not self.period_filter_applied:
-            self._warn_period_required()
-            return
-        folder = filedialog.askdirectory(
-            initialdir=self.last_browse_dir,
-            title="Selecionar Pasta Contendo Arquivos .XML, .ZIP ou .RAR",
-        )
+        folder = filedialog.askdirectory(initialdir=self.last_browse_dir, title="Selecionar pasta com XMLs")
         if not folder:
             return
         self.last_browse_dir = folder
@@ -1793,53 +1503,77 @@ class ConfereFiscalDesktopApp:
         self.xml_alerts = []
         self.xml_summary = {}
         self.loaded_archive_names = []
-        self.lbl_sidebar_xml_status.config(
-            text="Nenhum lote XML (.zip/.rar) carregado.",
-            fg=PALETTE["sb_muted"],
-        )
+        self.lbl_sidebar_xml_status.config(text="Nenhum XML carregado.", fg=PALETTE["sb_muted"])
         self.refresh_all_views()
 
     def browse_and_import_pdf(self) -> None:
-        if not self.period_filter_applied:
-            self._warn_period_required()
-            return
         p = filedialog.askopenfilename(
             initialdir=self.last_browse_dir,
-            title="Selecionar Relatório Contábil / Fiscal em PDF",
+            title="Selecionar relatório de vendas em PDF",
             filetypes=[("Arquivos PDF (*.pdf)", "*.pdf *.PDF"), ("Todos os arquivos (*.*)", "*.*")],
         )
         if not p:
             return
         self.last_browse_dir = str(Path(p).parent)
-        self.pdf_last_bytes = Path(p).read_bytes()
+        try:
+            pdf_bytes = Path(p).read_bytes()
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+            res = parse_sales_pdf_bytes(pdf_bytes, os.path.basename(p))
+        except Exception as exc:
+            messagebox.showerror("Não foi possível ler o PDF", f"Erro ao abrir o arquivo:\n{exc}")
+            return
+        finally:
+            self.root.config(cursor="")
+
+        records = res.get("records") or []
+        if not records:
+            messagebox.showwarning(
+                "Nenhuma venda encontrada no PDF",
+                res.get("scannedWarning") or "Não encontrei a tabela de vendas neste PDF.",
+            )
+            return
+
+        self.pdf_last_bytes = pdf_bytes
         self.pdf_last_name = os.path.basename(p)
-        res = parse_sales_pdf_bytes(self.pdf_last_bytes, self.pdf_last_name)
-        if res.get("isScannedImagePdf"):
-            if messagebox.askyesno(
-                "PDF Digitalizado como Imagem",
-                f"{res.get('scannedWarning')}\n\nDeseja executar o OCR Local agora?",
-            ):
-                res = perform_local_ocr_pdf_bytes(self.pdf_last_bytes, self.pdf_last_name)
-        self.pdf_records = res.get("records") or []
-        tot_pdf = sum(
-            float(r.get("totalValue") or 0.0)
-            for r in self.pdf_records
-            if str(r.get("status") or "AUTORIZADO").upper() == "AUTORIZADO"
-        )
+        self.pdf_records = records
+        tot_pdf = sum(float(r.get("totalValue") or 0.0) for r in records if str(r.get("status") or "AUTORIZADO").upper() == "AUTORIZADO")
         self.lbl_sidebar_pdf_status.config(
-            text=f"✓ {self.pdf_last_name}: {len(self.pdf_records)} registros ({_fmt_brl(tot_pdf)})",
+            text=f"✓ {self.pdf_last_name}\n{len(records)} notas — {_fmt_brl(tot_pdf)}",
             fg="#34d399",
         )
-        self.refresh_all_views()
+
+        dates = [r.get("issueDate") for r in records]
+        if self.period_filter_applied:
+            self.refresh_all_views()
+        else:
+            self._auto_period_from_dates(dates, "relatório")
+
+        checks = res.get("reportChecks") or []
+        linhas = []
+        for c in checks:
+            rep = _fmt_brl(c["report"]) if "Valor" in c["label"] else str(c["report"])
+            ext = _fmt_brl(c["extracted"]) if "Valor" in c["label"] else str(c["extracted"])
+            linhas.append(f"{'✓' if c['ok'] else '⚠'} {c['label']}: relatório {rep} — lido {ext}")
+        dmin, dmax = min(d for d in dates if d), max(d for d in dates if d)
+        msg = (
+            f"Relatório importado: {self.pdf_last_name}\n\n"
+            f"• Notas lidas: {len(records)}\n"
+            f"• Valor total: {_fmt_brl(tot_pdf)}\n"
+            f"• Datas: {_fmt_date_br(dmin)} até {_fmt_date_br(dmax)}\n"
+        )
+        if linhas:
+            msg += "\nConferência com o rodapé do relatório:\n" + "\n".join(linhas)
+        if any(not c["ok"] for c in checks):
+            messagebox.showwarning("Relatório importado com diferença", msg)
+        else:
+            messagebox.showinfo("Relatório importado", msg)
 
     def clear_imported_pdf(self) -> None:
         self.pdf_records = []
         self.pdf_last_bytes = b""
         self.pdf_last_name = ""
-        self.lbl_sidebar_pdf_status.config(
-            text="Nenhum relatório PDF carregado (opcional).",
-            fg=PALETTE["sb_muted"],
-        )
+        self.lbl_sidebar_pdf_status.config(text="Nenhum relatório carregado (opcional).", fg=PALETTE["sb_muted"])
         self.refresh_all_views()
 
     # =========================================================================
@@ -1852,42 +1586,34 @@ class ConfereFiscalDesktopApp:
         self.audit_dashboard = None
         self.last_db_audit_data = {}
 
-        self.lbl_top_workflow_badge.configure(
-            text="PASSO 2 PENDENTE — FILTRO OBRIGATÓRIO",
-            bg="#fef3c7",
-            fg="#92400e",
-        )
+        self.lbl_top_workflow_badge.configure(text="SEM PERÍODO", bg="#fef3c7", fg="#92400e")
         self.lbl_overview_scope.configure(
-            text="Valores zerados (R$ 0,00). Informe a Data Início e Fim no Passo 2 e clique em '✓ APLICAR FILTRO DE PERÍODO' para carregar os dados e habilitar os XMLs."
+            text="Informe o período (passo 2) ou importe o relatório PDF / XMLs — o período é preenchido sozinho."
         )
 
         # Zera KPIs
         self.kpi_bco_emi_val.config(text="R$ 0,00")
-        self.kpi_bco_emi_sub.config(text="0 notas (Aguardando filtro de período)")
+        self.kpi_bco_emi_sub.config(text="—")
 
         self.kpi_bco_aut_val.config(text="R$ 0,00")
-        self.kpi_bco_aut_sub.config(text="0 notas | Dif. D+1: 0 (R$ 0,00)")
+        self.kpi_bco_aut_sub.config(text="—")
 
         self.kpi_xml_val.config(text="R$ 0,00")
-        self.kpi_xml_sub.config(text="0 XMLs (Bloqueado até filtrar período)")
+        self.kpi_xml_sub.config(text="—")
 
         self.kpi_pdf_val.config(text="R$ 0,00")
-        self.kpi_pdf_sub.config(text="0 registros no relatório PDF")
+        self.kpi_pdf_sub.config(text="—")
 
-        self.kpi_bat_val.config(text="Aguardando Período", fg=PALETTE["text_muted"])
-        self.kpi_bat_sub.config(text="Aplique o filtro no Passo 2 para iniciar")
+        self.kpi_bat_val.config(text="Aguardando", fg=PALETTE["text_muted"])
+        self.kpi_bat_sub.config(text="Informe o período")
 
         # Zera Comparativo Triplo com linhas 0,00
         for i in self.tree_triple.get_children():
             self.tree_triple.delete(i)
-        for lbl in ("Consolidado Geral (55 + 65)", "NF-e Modelo 55", "NFC-e Modelo 65"):
+        for lbl in ("Total (NF-e + NFC-e)", "NF-e (modelo 55)", "NFC-e (modelo 65)"):
             self.tree_triple.insert(
-                "",
-                "end",
-                values=(
-                    lbl, 0, "R$ 0,00", 0, "R$ 0,00", "R$ 0,00",
-                    0, "R$ 0,00", 0, "R$ 0,00", "R$ 0,00", "Aguardando Período",
-                ),
+                "", "end",
+                values=(lbl, 0, "R$ 0,00", 0, "R$ 0,00", 0, "R$ 0,00", "R$ 0,00", "Aguardando período"),
                 tags=("zero",),
             )
 
@@ -1903,19 +1629,19 @@ class ConfereFiscalDesktopApp:
                 tree.delete(i)
 
         self.lbl_d1_header.config(
-            text="Desafio Temporal (D+1 / Contingência): 0 notas (Aplique o filtro de período no Passo 2)"
+            text="Notas emitidas num dia e autorizadas na SEFAZ em outro dia"
         )
         self.lbl_sum_55.config(
-            text="Modelo 55   |   Banco (Emissão): 0 notas (R$ 0,00)   |   Banco (Autorização): 0 notas (R$ 0,00)   |   XML: 0 notas (R$ 0,00)   |   Aguardando Período"
+            text="NF-e (modelo 55): informe o período para ver os dados."
         )
         self.lbl_sum_65.config(
-            text="Modelo 65   |   Banco (Emissão): 0 notas (R$ 0,00)   |   Banco (Autorização): 0 notas (R$ 0,00)   |   XML: 0 notas (R$ 0,00)   |   Aguardando Período"
+            text="NFC-e (modelo 65): informe o período para ver os dados."
         )
         self.lbl_events_summary.config(
-            text="Eventos Isolados do Faturamento (Status 100) — Canceladas (101): 0 (R$ 0,00)  |  Inutilizadas (102): 0"
+            text="Notas canceladas e numerações inutilizadas (não entram no faturamento)"
         )
         self.lbl_matrix_summary.config(
-            text="Matriz de Divergências (0 ocorrências) — Aplique o filtro de período no Passo 2"
+            text="Diferenças encontradas"
         )
 
     def refresh_all_views(self) -> None:
@@ -1954,20 +1680,12 @@ class ConfereFiscalDesktopApp:
         self.audit_dashboard = self.reconciliation_result["auditDashboard"]
 
         per_txt = f"{_fmt_date_br(dt_ini)} a {_fmt_date_br(dt_fim)}"
-        base_txt = "Autorização SEFAZ (tb_nfe.data_hora)" if date_field == "authDate" else "Data de Emissão (tb_nfvenda.dt_emissao)"
-        xml_txt = (
-            f"{len(self.xml_documents)} XMLs ({', '.join(self.loaded_archive_names)})"
-            if self.xml_documents
-            else "Aguardando importação no Passo 3"
-        )
-        self.lbl_top_workflow_badge.configure(
-            text=f"✓ PERÍODO ATIVO: {per_txt}",
-            bg="#dcfce7",
-            fg="#166534",
-        )
-        self.lbl_overview_scope.config(
-            text=f"Base Temporal: {base_txt}   |   Lote XML: {xml_txt}"
-        )
+        base_txt = "data de autorização" if date_field == "authDate" else "data de emissão"
+        fontes = []
+        fontes.append(f"{len(self.xml_documents)} XMLs" if self.xml_documents else "sem XMLs")
+        fontes.append(f"relatório com {len(self.pdf_records)} notas" if self.pdf_records else "sem relatório PDF")
+        self.lbl_top_workflow_badge.configure(text=f"PERÍODO {per_txt}", bg="#dcfce7", fg="#166534")
+        self.lbl_overview_scope.config(text=f"Comparando pela {base_txt}  •  " + "  •  ".join(fontes))
 
         self._update_kpi_cards()
         self._populate_overview_trees()
@@ -1983,21 +1701,21 @@ class ConfereFiscalDesktopApp:
         bat = k["statusBatimento"]
 
         self.kpi_bco_emi_val.config(text=_fmt_brl(k["totalBancoEmissao"]))
-        self.kpi_bco_emi_sub.config(text=f"{k['qtdBancoEmissao']} notas no período (dt_emissao)")
+        self.kpi_bco_emi_sub.config(text=f"{k['qtdBancoEmissao']} notas")
 
         self.kpi_bco_aut_val.config(text=_fmt_brl(k["totalBancoAutorizacao"]))
         self.kpi_bco_aut_sub.config(
-            text=f"{k['qtdBancoAutorizacao']} notas | Dif. D+1: {k['qtdDPlus1']} ({_fmt_brl(k['divergenciaEmissaoVsAutorizacao'])})"
+            text=f"{k['qtdBancoAutorizacao']} notas  •  {k['qtdDPlus1']} em outro dia"
         )
 
         self.kpi_xml_val.config(text=_fmt_brl(k["totalXmlImportados"]))
-        self.kpi_xml_sub.config(text=f"{k['qtdXmlImportados']} XMLs autorizados no período")
+        self.kpi_xml_sub.config(text=f"{k['qtdXmlImportados']} notas autorizadas")
 
         self.kpi_pdf_val.config(text=_fmt_brl(k["totalRelatorioPdf"]))
-        self.kpi_pdf_sub.config(text=f"{k['qtdRelatorioPdf']} registros no relatório PDF")
+        self.kpi_pdf_sub.config(text=f"{k['qtdRelatorioPdf']} notas")
 
         self.kpi_bat_val.config(text=bat["label"])
-        self.kpi_bat_sub.config(text=bat["detail"][:58])
+        self.kpi_bat_sub.config(text=bat["detail"])
         color = PALETTE["emerald"] if bat["badge"] == "success" else (PALETTE["rose"] if bat["badge"] == "danger" else PALETTE["text_secondary"])
         self.kpi_bat_val.config(fg=color)
 
@@ -2012,19 +1730,16 @@ class ConfereFiscalDesktopApp:
             if not r:
                 continue
             dif_bx = r.get("diffBancoVsXml")
-            dif_bx_str = _fmt_brl(dif_bx) if dif_bx is not None else "R$ 0,00"
+            dif_bx_str = _fmt_brl(dif_bx) if (dif_bx is not None and self.xml_documents) else "—"
             badge = (r.get("batimento") or {}).get("badge", "")
             tag = "bold" if key == "ALL" else ("ok" if badge == "success" else ("err" if badge == "danger" else ("even" if idx % 2 == 0 else "odd")))
             self.tree_triple.insert(
                 "",
                 "end",
                 values=(
-                    r["label"],
-                    r["qtdBancoEmissao"],
-                    _fmt_brl(r["totalBancoEmissao"]),
-                    r["qtdBancoAutorizacao"],
-                    _fmt_brl(r["totalBancoAutorizacao"]),
-                    _fmt_brl(r["divergenciaDPlus1"]),
+                    {"ALL": "Total (NF-e + NFC-e)", "55": "NF-e (modelo 55)", "65": "NFC-e (modelo 65)"}.get(key, r["label"]),
+                    r["qtdBancoAutorizacao"] if self.var_date_base.get() == "authDate" else r["qtdBancoEmissao"],
+                    _fmt_brl(r["totalBancoAutorizacao"] if self.var_date_base.get() == "authDate" else r["totalBancoEmissao"]),
                     r["qtdXml"],
                     _fmt_brl(r["totalXml"]),
                     r["qtdPdf"],
@@ -2039,7 +1754,7 @@ class ConfereFiscalDesktopApp:
             self.tree_d1.delete(i)
         d1_list = self.audit_dashboard.get("dPlus1Records") or []
         self.lbl_d1_header.config(
-            text=f"Desafio Temporal (D+1 / Contingência): {len(d1_list)} notas no período com Data de Autorização SEFAZ diferente da Data de Emissão"
+            text=f"Notas emitidas num dia e autorizadas na SEFAZ em outro dia: {len(d1_list)}"
         )
         for idx, d in enumerate(d1_list[:500]):
             self.tree_d1.insert(
@@ -2072,10 +1787,8 @@ class ConfereFiscalDesktopApp:
 
         lbl_w.config(
             text=(
-                f"Modelo {model_code}   |   "
-                f"Banco (Emissão): {tc_m.get('qtdBancoEmissao', 0)} notas ({_fmt_brl(tc_m.get('totalBancoEmissao', 0.0))})   |   "
-                f"Banco (Autorização): {tc_m.get('qtdBancoAutorizacao', 0)} notas ({_fmt_brl(tc_m.get('totalBancoAutorizacao', 0.0))})   |   "
-                f"XML Importado: {tc_m.get('qtdXml', 0)} notas ({_fmt_brl(tc_m.get('totalXml', 0.0))})   |   "
+                f"Banco: {tc_m.get('qtdBancoEmissao', 0)} notas ({_fmt_brl(tc_m.get('totalBancoEmissao', 0.0))})     "
+                f"XML: {tc_m.get('qtdXml', 0)} notas ({_fmt_brl(tc_m.get('totalXml', 0.0))})     "
                 f"Resultado: {(tc_m.get('batimento') or {}).get('label', '')}"
             )
         )
@@ -2154,13 +1867,13 @@ class ConfereFiscalDesktopApp:
             if search_q and search_q not in num_str.lower() and search_q not in key_str.lower():
                 continue
             if not self.xml_documents:
-                st_conc = "Aguardando XML (.zip/.rar)"
+                st_conc = "XMLs não importados"
                 tag = "even" if idx % 2 == 0 else "odd"
             elif (key_str and key_str in xml_keys_mod) or (num_str and num_str in xml_nums_mod):
-                st_conc = "✓ Conciliado com XML"
+                st_conc = "✓ Sim"
                 tag = "ok"
             else:
-                st_conc = "⚠ Faltando no XML"
+                st_conc = "⚠ Falta o XML"
                 tag = "err"
 
             tree_docs.insert(
@@ -2201,9 +1914,7 @@ class ConfereFiscalDesktopApp:
 
         self.lbl_events_summary.config(
             text=(
-                f"Eventos Isolados do Faturamento (Status 100) — "
-                f"Canceladas (101): {qtd_101} ({_fmt_brl(val_101)})  |  "
-                f"Inutilizadas (102): {qtd_102}"
+                f"Canceladas: {qtd_101} ({_fmt_brl(val_101)})     Inutilizadas: {qtd_102}"
             )
         )
         for idx, r in enumerate(rows[:500]):
@@ -2252,11 +1963,7 @@ class ConfereFiscalDesktopApp:
 
         self.lbl_matrix_summary.config(
             text=(
-                f"Matriz de Divergências ({counts.get('total', len(rows))} ocorrências no período) — "
-                f"Banco sem XML: {counts.get('BANCO_SEM_XML', 0)} | "
-                f"XML sem Banco/PDF: {counts.get('XML_SEM_RELATORIO_OU_BANCO', 0)} | "
-                f"PDF sem XML: {counts.get('RELATORIO_SEM_XML', 0)} | "
-                f"D+1: {counts.get('DIVERGENCIA_D_MAIS_1', 0)}"
+                f"Diferenças encontradas: {counts.get('total', len(rows))}"
             )
         )
 
@@ -2282,14 +1989,13 @@ class ConfereFiscalDesktopApp:
                 "",
                 "end",
                 values=(
+                    r.get("origem_falha", "—"),
                     r.get("nf_numero", "—"),
                     r.get("nf_modelo", "—"),
-                    r.get("id_nfe", "—"),
+                    _fmt_brl(r.get("valor")),
                     _fmt_date_br(r.get("dt_emissao")),
                     _fmt_datetime_br(r.get("data_hora_sefaz")),
-                    r.get("status_des", "—"),
-                    _fmt_brl(r.get("valor")),
-                    r.get("origem_falha", "—"),
+                    r.get("id_nfe", "—"),
                 ),
                 tags=(tag,),
             )
@@ -2327,7 +2033,7 @@ class ConfereFiscalDesktopApp:
             "xmlFiles": self.loaded_archive_names or (["Lote XML Importado"] if self.xml_documents else ["Nenhum"]),
             "pdfFile": self.pdf_last_name or "Nenhum",
             "firebirdDb": self.var_db_path.get(),
-            "dateField": "Autorização SEFAZ (data_hora)" if self.var_date_base.get() == "authDate" else "Data de Emissão (dt_emissao)",
+            "dateField": "Data de autorização (SEFAZ)" if self.var_date_base.get() == "authDate" else "Data de emissão",
             "period": f"{self.var_dt_inicio.get() or 'Início'} a {self.var_dt_fim.get() or 'Fim'}",
         }
 
@@ -2337,9 +2043,9 @@ class ConfereFiscalDesktopApp:
             return
         path = filedialog.asksaveasfilename(
             initialdir=self.last_browse_dir,
-            title="Salvar Planilha de Auditoria Fiscal (.xlsx)",
+            title="Salvar resultado em Excel",
             defaultextension=".xlsx",
-            initialfile="auditoria_fiscal_conferefiscal.xlsx",
+            initialfile="conferencia_vendas.xlsx",
             filetypes=[("Planilha Excel (*.xlsx)", "*.xlsx")],
         )
         if not path:
@@ -2350,7 +2056,7 @@ class ConfereFiscalDesktopApp:
             self.audit_dashboard,
         )
         Path(path).write_bytes(data)
-        messagebox.showinfo("Exportação Excel Concluída", f"Planilha Excel (.xlsx) gerada com cabeçalho de auditoria em:\n{path}")
+        messagebox.showinfo("Excel salvo", f"Arquivo salvo em:\n{path}")
 
     def export_pdf_dialog(self) -> None:
         if not self.period_filter_applied or not self.reconciliation_result:
@@ -2358,9 +2064,9 @@ class ConfereFiscalDesktopApp:
             return
         path = filedialog.asksaveasfilename(
             initialdir=self.last_browse_dir,
-            title="Salvar Relatório PDF de Auditoria Fiscal",
+            title="Salvar resultado em PDF",
             defaultextension=".pdf",
-            initialfile="relatorio_auditoria_fiscal.pdf",
+            initialfile="conferencia_vendas.pdf",
             filetypes=[("Relatório PDF (*.pdf)", "*.pdf")],
         )
         if not path:
@@ -2372,7 +2078,7 @@ class ConfereFiscalDesktopApp:
             self.audit_dashboard,
         )
         Path(path).write_bytes(data)
-        messagebox.showinfo("Exportação PDF Concluída", f"Relatório PDF com cabeçalho de auditoria salvo em:\n{path}")
+        messagebox.showinfo("PDF salvo", f"Arquivo salvo em:\n{path}")
 
     def start_and_open_web_ui(self) -> None:
         port = 5000
@@ -2393,47 +2099,55 @@ class ConfereFiscalDesktopApp:
     # =========================================================================
 
     def check_version_status(self) -> Dict[str, Any]:
-        """Consulta a versão publicada no GitHub e atualiza os indicadores visuais da tela."""
+        """Consulta a versão publicada no GitHub e atualiza o botão do topo."""
         self.version_info = get_installed_version_info()
-        self.installed_version = str(self.version_info.get("version") or "1.1.0")
+        self.installed_version = str(self.version_info.get("version") or "1.0.0")
         info = check_published_version()
         self.last_version_check = info
+        self._apply_version_badge(info)
+        return info
 
+    def _apply_version_badge(self, info: Dict[str, Any]) -> None:
         pub_ver = info.get("publishedVersion")
         if info.get("updateAvailable") and pub_ver:
-            self.lbl_top_version_info.config(
-                text=f"Instalada: v{self.installed_version}  |  Publicada: v{pub_ver} (Nova!)",
-                bg="#fef3c7",
-                fg="#92400e",
-            )
-            self.btn_check_update.set_text(f"⬆ Atualizar para v{pub_ver}")
-            self.btn_sidebar_update.set_text(f"⬆ Atualizar para v{pub_ver}")
-        elif pub_ver:
-            self.lbl_top_version_info.config(
-                text=f"Instalada: v{self.installed_version}  |  Publicada: v{pub_ver} ✓",
-                bg="#dcfce7",
-                fg="#166534",
-            )
-            self.btn_check_update.set_text("🔄 Atualizar")
-            self.btn_sidebar_update.set_text(f"🔄 Atualizar (Instalada v{self.installed_version})")
+            self.lbl_top_version_info.config(text=f"Versão {self.installed_version}", bg="#fef3c7", fg="#92400e")
+            self.btn_check_update.set_text(f"⬆ Atualizar para {pub_ver}")
         else:
-            self.lbl_top_version_info.config(
-                text=f"Instalada: v{self.installed_version}  |  Publicada: —",
-                bg="#f1f5f9",
-                fg=PALETTE["text_secondary"],
-            )
-        return info
+            self.lbl_top_version_info.config(text=f"Versão {self.installed_version}", bg="#f1f5f9", fg=PALETTE["text_secondary"])
+            self.btn_check_update.set_text("Verificar atualização")
+
+    def _check_updates_in_background(self) -> None:
+        """Ao abrir o app, confere em segundo plano se há versão nova (sem travar a tela)."""
+        holder: Dict[str, Any] = {}
+
+        def _worker() -> None:
+            try:
+                holder["info"] = check_published_version(timeout=6.0)
+            except Exception:
+                holder["info"] = None
+
+        def _poll() -> None:
+            if "info" not in holder:
+                self.root.after(400, _poll)
+                return
+            info = holder["info"]
+            if info:
+                self.last_version_check = info
+                self._apply_version_badge(info)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.root.after(400, _poll)
 
     def open_version_and_update_dialog(self) -> None:
         """
-        Abre a Central de Versão e Atualização (checando a versão instalada vs. a versão publicada
-        em https://github.com/junin1737/conferefiscal e permitindo atualizar com 1 clique).
+        Botão de atualização: consulta o GitHub; se houver versão maior que a instalada,
+        baixa, instala e reinicia o aplicativo.
         """
         win = tk.Toplevel(self.root)
-        win.title("Atualização e Controle de Versão — ConfereFiscal")
-        win.geometry("680x510")
-        win.minsize(640, 470)
-        win.configure(bg=PALETTE["app_bg"])
+        win.title("Atualização do ConfereFiscal")
+        win.geometry("460x210")
+        win.resizable(False, False)
+        win.configure(bg=PALETTE["card_bg"])
         win.transient(self.root)
         win.grab_set()
         if self.icon_photo is not None:
@@ -2442,217 +2156,94 @@ class ConfereFiscalDesktopApp:
             except Exception:
                 pass
 
-        # Cabeçalho escuro executivo
-        hdr = tk.Frame(win, bg=PALETTE["sb_bg"], padx=18, pady=14)
-        hdr.pack(fill="x")
-        tk.Label(
-            hdr,
-            text="Central de Versão e Atualização (GitHub)",
-            bg=PALETTE["sb_bg"],
-            fg="#ffffff",
-            font=("Segoe UI", 13, "bold"),
-        ).pack(anchor="w")
-        tk.Label(
-            hdr,
-            text="Repositório Oficial: https://github.com/junin1737/conferefiscal",
-            bg=PALETTE["sb_bg"],
-            fg="#38bdf8",
-            font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(2, 0))
-
-        body = tk.Frame(win, bg=PALETTE["app_bg"], padx=16, pady=12)
+        body = tk.Frame(win, bg=PALETTE["card_bg"], padx=20, pady=16)
         body.pack(fill="both", expand=True)
+        lbl_title = tk.Label(body, text="Verificando atualizações...", bg=PALETTE["card_bg"], fg=PALETTE["text_primary"],
+                             font=("Segoe UI", 12, "bold"), anchor="w", justify="left")
+        lbl_title.pack(fill="x")
+        lbl_msg = tk.Label(body, text=f"Versão instalada: {self.installed_version}", bg=PALETTE["card_bg"],
+                           fg=PALETTE["text_secondary"], font=("Segoe UI", 9), anchor="w", justify="left", wraplength=410)
+        lbl_msg.pack(fill="x", pady=(6, 0))
+        btn_bar = tk.Frame(body, bg=PALETTE["card_bg"])
+        btn_bar.pack(side="bottom", fill="x")
 
-        # Card Comparativo: Versão Instalada vs. Versão Publicada
-        cmp_outer, cmp_inner = self._create_surface_card(body, accent_top=PALETTE["sky"], padx=14, pady=12)
-        cmp_outer.pack(fill="x", pady=(0, 10))
+        state: Dict[str, Any] = {}
 
-        cards_row = tk.Frame(cmp_inner, bg=PALETTE["card_bg"])
-        cards_row.pack(fill="x", pady=(0, 8))
-        cards_row.columnconfigure(0, weight=1)
-        cards_row.columnconfigure(1, weight=1)
+        def _set(title: str, msg: str, color: str = PALETTE["text_primary"]) -> None:
+            lbl_title.config(text=title, fg=color)
+            lbl_msg.config(text=msg)
 
-        # Box 1: Versão Instalada
-        b_inst = tk.Frame(cards_row, bg="#f8fafc", highlightthickness=1, highlightbackground="#cbd5e1", padx=12, pady=8)
-        b_inst.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        tk.Label(b_inst, text="VERSÃO INSTALADA NESTA MÁQUINA", bg="#f8fafc", fg=PALETTE["text_secondary"], font=("Segoe UI", 8, "bold")).pack(anchor="w")
-        lbl_inst_val = tk.Label(b_inst, text=f"v{self.installed_version}", bg="#f8fafc", fg=PALETTE["text_primary"], font=("Segoe UI", 16, "bold"))
-        lbl_inst_val.pack(anchor="w", pady=(2, 1))
-        lbl_inst_sub = tk.Label(b_inst, text=f"Compilação local: {self.version_info.get('releaseDate', '—')}", bg="#f8fafc", fg=PALETTE["text_muted"], font=("Segoe UI", 8))
-        lbl_inst_sub.pack(anchor="w")
+        def _clear_buttons() -> None:
+            for w in btn_bar.winfo_children():
+                w.destroy()
 
-        # Box 2: Versão Publicada no GitHub
-        b_pub = tk.Frame(cards_row, bg="#f8fafc", highlightthickness=1, highlightbackground="#cbd5e1", padx=12, pady=8)
-        b_pub.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        tk.Label(b_pub, text="VERSÃO PUBLICADA (GITHUB)", bg="#f8fafc", fg=PALETTE["text_secondary"], font=("Segoe UI", 8, "bold")).pack(anchor="w")
-        lbl_pub_val = tk.Label(b_pub, text="Verificando...", bg="#f8fafc", fg=PALETTE["blue"], font=("Segoe UI", 16, "bold"))
-        lbl_pub_val.pack(anchor="w", pady=(2, 1))
-        lbl_pub_sub = tk.Label(b_pub, text="Consultando junin1737/conferefiscal...", bg="#f8fafc", fg=PALETTE["text_muted"], font=("Segoe UI", 8))
-        lbl_pub_sub.pack(anchor="w")
+        def _close_button(text: str = "Fechar") -> None:
+            ModernButton(btn_bar, text=text, command=win.destroy, bg="#e2e8f0", hover_bg="#cbd5e1",
+                         fg=PALETTE["text_primary"], padx=14, pady=6, font=("Segoe UI", 9, "bold")).pack(side="right")
 
-        lbl_status_banner = tk.Label(
-            cmp_inner,
-            text="Consultando versão publicada no GitHub...",
-            bg="#eff6ff",
-            fg="#1e3a8a",
-            font=("Segoe UI", 9, "bold"),
-            padx=10,
-            pady=6,
-            justify="left",
-            anchor="w",
-        )
-        lbl_status_banner.pack(fill="x")
+        def _run_in_thread(fn: Callable[[], Any], done: Callable[[Any], None]) -> None:
+            def _worker() -> None:
+                try:
+                    state["result"] = fn()
+                except Exception as exc:  # pragma: no cover - rede
+                    state["result"] = {"ok": False, "message": str(exc)}
 
-        # Card Changelog / Notas de Versão
-        log_outer, log_inner = self._create_surface_card(body, padx=14, pady=10)
-        log_outer.pack(fill="both", expand=True, pady=(0, 10))
-        tk.Label(
-            log_inner,
-            text="Histórico de Alterações e Notas da Versão Publicada (Changelog):",
-            bg=PALETTE["card_bg"],
-            fg=PALETTE["text_primary"],
-            font=("Segoe UI", 9, "bold"),
-        ).pack(anchor="w", pady=(0, 6))
-
-        txt_changelog = tk.Text(
-            log_inner,
-            height=8,
-            bg="#f8fafc",
-            fg=PALETTE["text_primary"],
-            font=("Segoe UI", 9),
-            relief="flat",
-            padx=10,
-            pady=8,
-            wrap="word",
-        )
-        txt_changelog.pack(fill="both", expand=True)
-
-        # Barra de Botões Inferior
-        btn_bar = tk.Frame(body, bg=PALETTE["app_bg"])
-        btn_bar.pack(fill="x")
-
-        def _refresh_check() -> None:
-            lbl_pub_val.config(text="Consultando...", fg=PALETTE["blue"])
-            lbl_status_banner.config(text="Verificando versão publicada em github.com/junin1737/conferefiscal...", bg="#eff6ff", fg="#1e3a8a")
-            win.update_idletasks()
-
-            info = self.check_version_status()
-            lbl_inst_val.config(text=f"v{info['installedVersion']}")
-            lbl_inst_sub.config(text=f"Data da versão instalada: {info.get('installedReleaseDate') or '—'}")
-
-            pub_v = info.get("publishedVersion")
-            if pub_v:
-                lbl_pub_val.config(
-                    text=f"v{pub_v}",
-                    fg=PALETTE["emerald"] if not info.get("updateAvailable") else PALETTE["amber"],
-                )
-                lbl_pub_sub.config(text=f"Publicado em: {info.get('publishedReleaseDate') or 'GitHub main'}")
-            else:
-                lbl_pub_val.config(text="Não localizada", fg=PALETTE["text_muted"])
-                lbl_pub_sub.config(text="Repositório sem version.json publicado ou sem internet")
-
-            if info.get("updateAvailable"):
-                lbl_status_banner.config(
-                    text=f"{info['statusTitle']} — Clique em 'Baixar e Atualizar Agora' para instalar a v{pub_v}.",
-                    bg="#fef3c7",
-                    fg="#92400e",
-                )
-            elif info.get("ok"):
-                lbl_status_banner.config(
-                    text=f"{info['statusTitle']} — A versão instalada (v{info['installedVersion']}) está igual ou superior à publicada (v{pub_v}).",
-                    bg="#dcfce7",
-                    fg="#166534",
-                )
-            else:
-                lbl_status_banner.config(
-                    text=info.get("statusMessage", "Não foi possível consultar o GitHub no momento."),
-                    bg="#fff1f2",
-                    fg="#9f1239",
-                )
-
-            txt_changelog.configure(state="normal")
-            txt_changelog.delete("1.0", "end")
-            for item in info.get("changelog") or []:
-                txt_changelog.insert("end", f"• {item}\n")
-            txt_changelog.configure(state="disabled")
-
-        def _do_update() -> None:
-            info = self.last_version_check or self.check_version_status()
-            pub_v = info.get("publishedVersion")
-            if pub_v and not info.get("updateAvailable"):
-                if not messagebox.askyesno(
-                    "Versão Já Atualizada",
-                    f"A versão instalada (v{info['installedVersion']}) já é a versão mais recente (v{pub_v}).\n\n"
-                    f"Deseja forçar a reinstalação/sincronização dos arquivos a partir do GitHub mesmo assim?",
-                    parent=win,
-                ):
+            def _poll() -> None:
+                if "result" in state:
+                    res = state.pop("result")
+                    if win.winfo_exists():
+                        done(res)
                     return
+                win.after(300, _poll)
 
-            lbl_status_banner.config(
-                text="Baixando e aplicando atualização do repositório GitHub (junin1737/conferefiscal)...",
-                bg="#eff6ff",
-                fg="#1e3a8a",
-            )
-            win.update_idletasks()
+            threading.Thread(target=_worker, daemon=True).start()
+            win.after(300, _poll)
 
-            upd_res = apply_published_update(
-                remote_info=info,
-                progress_callback=lambda msg: (lbl_status_banner.config(text=msg), win.update_idletasks()),
-            )
-            if upd_res.get("ok"):
-                _refresh_check()
-                messagebox.showinfo("Atualização Concluída", upd_res.get("message", "Aplicação atualizada com sucesso!"), parent=win)
+        def _on_checked(info: Dict[str, Any]) -> None:
+            self.last_version_check = info
+            self._apply_version_badge(info)
+            _clear_buttons()
+            pub = info.get("publishedVersion")
+            if not info.get("ok"):
+                _set("Não foi possível verificar", "Sem conexão com o GitHub no momento. Verifique a internet e tente de novo.",
+                     PALETTE["rose"])
+                _close_button()
+            elif info.get("updateAvailable"):
+                _set(f"Baixando a versão {pub}...", f"Versão instalada: {info['installedVersion']}  →  nova: {pub}\n"
+                     "Seus dados e configurações são preservados.", PALETTE["blue"])
+                _run_in_thread(lambda: apply_published_update(remote_info=info), _on_updated)
             else:
-                lbl_status_banner.config(text="Falha ao aplicar atualização automática.", bg="#fff1f2", fg="#9f1239")
-                messagebox.showerror("Erro ao Atualizar", upd_res.get("message", "Erro desconhecido."), parent=win)
+                _set("Você já está na versão mais recente ✓", f"Versão instalada: {info['installedVersion']}", PALETTE["emerald"])
+                _close_button("OK")
 
-        ModernButton(
-            btn_bar,
-            text="🔄 Verificar Novamente",
-            command=_refresh_check,
-            bg=PALETTE["blue"],
-            hover_bg=PALETTE["blue_hover"],
-            padx=14,
-            pady=6,
-            font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=(0, 8))
+        def _on_updated(res: Dict[str, Any]) -> None:
+            _clear_buttons()
+            if res.get("ok"):
+                _set(f"Atualizado para a versão {res.get('updatedToVersion')} ✓",
+                     "O ConfereFiscal será reiniciado para concluir a atualização.", PALETTE["emerald"])
+                win.after(1500, self._restart_application)
+            else:
+                _set("Falha ao atualizar", res.get("message", "Erro desconhecido."), PALETTE["rose"])
+                _close_button()
 
-        ModernButton(
-            btn_bar,
-            text="⬇ Baixar e Atualizar Agora",
-            command=_do_update,
-            bg=PALETTE["emerald"],
-            hover_bg=PALETTE["emerald_hover"],
-            padx=14,
-            pady=6,
-            font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=(0, 8))
+        _run_in_thread(lambda: check_published_version(), _on_checked)
 
-        ModernButton(
-            btn_bar,
-            text="🌐 Abrir GitHub",
-            command=lambda: webbrowser.open("https://github.com/junin1737/conferefiscal"),
-            bg="#334155",
-            hover_bg="#475569",
-            padx=12,
-            pady=6,
-            font=("Segoe UI", 9, "bold"),
-        ).pack(side="left")
+    def _restart_application(self) -> None:
+        """Fecha e abre novamente o aplicativo (carrega os arquivos atualizados)."""
+        import subprocess
+        import sys
 
-        ModernButton(
-            btn_bar,
-            text="Fechar",
-            command=win.destroy,
-            bg="#e2e8f0",
-            hover_bg="#cbd5e1",
-            fg=PALETTE["text_primary"],
-            padx=14,
-            pady=6,
-            font=("Segoe UI", 9, "bold"),
-        ).pack(side="right")
-
-        win.after(80, _refresh_check)
-
+        exe = sys.executable
+        pyw = Path(exe).with_name("pythonw.exe")
+        if pyw.exists():
+            exe = str(pyw)
+        try:
+            subprocess.Popen([exe, "-m", "python_app.desktop_app"], cwd=str(ROOT_DIR),
+                             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        except Exception as exc:
+            messagebox.showinfo("Reinicie o aplicativo", f"Atualização instalada. Feche e abra o ConfereFiscal novamente.\n({exc})")
+            return
+        self.root.destroy()
 
 def launch_desktop_app() -> None:
     root = tk.Tk()
