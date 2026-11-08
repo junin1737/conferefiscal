@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ConfereFiscal — Dashboard de Conciliação e Auditoria Fiscal Contábil</title>
+  <link rel="icon" type="image/png" href="/icone.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Banner de Modo de Demonstração (Exibido apenas quando ativo) -->
+  <div id="demoBanner" class="demo-banner hidden" role="status" aria-live="polite">
+    <div class="demo-banner-content">
+      <span class="demo-badge">MODO DEMONSTRAÇÃO ATIVO</span>
+      <span>
+        Você está visualizando <strong>dados fictícios de exemplo</strong>. Nenhum dado real foi misturado a esta sessão.
+      </span>
+    </div>
+    <div class="demo-banner-actions">
+      <button type="button" class="btn btn-sm btn-outline-light" id="btnSwitchDemoFb25">Simular Firebird 2.5</button>
+      <button type="button" class="btn btn-sm btn-outline-light" id="btnSwitchDemoFb50">Simular Firebird 5.0</button>
+      <button type="button" class="btn btn-sm btn-danger-light" id="btnExitDemo">Sair da Demonstração</button>
+    </div>
+  </div>
+
+  <!-- Cabeçalho Principal -->
+  <header class="app-header">
+    <div class="brand-area">
+      <img src="/icone.png" alt="Ícone ConfereFiscal" class="brand-logo-img" style="width:42px;height:42px;border-radius:8px;object-fit:contain;background:#fff;padding:2px;" onerror="this.style.display='none'" />
+      <div>
+        <h1 class="brand-title">ConfereFiscal</h1>
+        <p class="brand-subtitle">Dashboard de Conciliação e Auditoria Fiscal Contábil (NF-e 55 • NFC-e 65 • SPED • Firebird 2.5 / 5.0)</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <span class="local-pill" title="100% executado localmente no seu computador, sem nuvem">
+        <span class="status-dot"></span> Operação 100% Local &amp; Privada
+      </span>
+      <button type="button" class="btn btn-secondary" id="btnLoadDemo">
+        Carregar Demonstração Guiada
+      </button>
+      <button type="button" class="btn btn-outline" id="btnOpenStorageModal">
+        Armazenamento &amp; Segurança Local
+      </button>
+    </div>
+  </header>
+
+  <!-- Barra de Progresso Global de Processamento -->
+  <div id="globalProgressBar" class="global-progress hidden" role="progressbar" aria-busy="true">
+    <div class="global-progress-inner">
+      <span id="globalProgressText">Processando arquivos...</span>
+      <div class="progress-track">
+        <div id="globalProgressFill" class="progress-fill" style="width: 45%"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notificações / Toasts Acessíveis -->
+  <div id="notificationArea" class="notification-area" aria-live="polite"></div>
+
+  <!-- Layout Principal com Menu Lateral (Sidebar) e Módulos de Auditoria -->
+  <div class="app-layout">
+    <nav class="stepper-sidebar" aria-label="Menu Lateral de Auditoria e Conciliação">
+      <!-- Bloco Sidebar 1: Conexão do Banco de Dados (Host, Porta, Banco, Usuário, Senha) -->
+      <div class="sidebar-footer-card" style="margin-bottom:12px;">
+        <h4>1. Conexão Banco (Firebird / Clipp)</h4>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:6px;margin-top:6px;">
+          <input type="text" id="sbDbHost" class="form-control form-control-sm" value="127.0.0.1" placeholder="Host" title="Host do Banco" />
+          <input type="number" id="sbDbPort" class="form-control form-control-sm" value="3050" placeholder="Porta" title="Porta TCP" />
+        </div>
+        <input type="text" id="sbDbPath" class="form-control form-control-sm" style="margin-top:6px;" value="C:/Work/MT/Cliente/Clipp/Base/CLIPP.FDB" placeholder="Caminho do .FDB (tb_nfvenda / tb_nfe)" title="Caminho do Banco .FDB" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
+          <input type="text" id="sbDbUser" class="form-control form-control-sm" value="SYSDBA" placeholder="Usuário" />
+          <input type="password" id="sbDbPass" class="form-control form-control-sm" value="masterkey" placeholder="Senha" />
+        </div>
+        <button type="button" class="btn btn-sm btn-primary btn-block" id="btnSidebarConnectDb" style="margin-top:8px;width:100%;">
+          Conectar &amp; Sincronizar Base
+        </button>
+        <small id="sbDbStatusText" style="display:block;margin-top:4px;font-size:11px;color:#94a3b8;">
+          Tabelas: <code>tb_nfvenda</code>, <code>tb_nfe</code>, <code>tb_nfv_item</code>
+        </small>
+      </div>
+
+      <!-- Bloco Sidebar 2: Filtro de Competência e Seletor de Base -->
+      <div class="sidebar-footer-card" style="margin-bottom:12px;">
+        <h4>2. Filtro de Competência</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
+          <div>
+            <small style="font-size:10.5px;color:#cbd5e1;">Data Início</small>
+            <input type="date" id="sbStartDate" class="form-control form-control-sm" />
+          </div>
+          <div>
+            <small style="font-size:10.5px;color:#cbd5e1;">Data Fim</small>
+            <input type="date" id="sbEndDate" class="form-control form-control-sm" />
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:#e2e8f0;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:4px;">
+            <input type="radio" name="sbDateBaseRadio" value="issueDate" checked />
+            <span>Por Data de Emissão (<code>dt_emissao</code>)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="sbDateBaseRadio" value="authDate" />
+            <span>Por Data de Autorização SEFAZ</span>
+          </label>
+        </div>
+        <button type="button" class="btn btn-sm btn-secondary btn-block" id="btnSidebarApplyCompetence" style="margin-top:8px;width:100%;">
+          Aplicar Competência
+        </button>
+      </div>
+
+      <!-- Bloco Sidebar 3: Módulos Principais de Auditoria -->
+      <div class="stepper-header">Módulos de Auditoria Fiscal</div>
+      <ol class="stepper-list" style="margin-bottom:14px;">
+        <li>
+          <button type="button" class="step-btn" data-step="8">
+            <span class="step-num">55</span>
+            <span class="step-info">
+              <strong>Conciliação NF-e (55)</strong>
+              <small id="step8Meta">CFOP, NCM e notas modelo 55</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="9">
+            <span class="step-num">65</span>
+            <span class="step-info">
+              <strong>Conciliação NFC-e (65)</strong>
+              <small id="step9Meta">CFOP, NCM e cupons modelo 65</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="10">
+            <span class="step-num">!</span>
+            <span class="step-info">
+              <strong>Canceladas e Inutilizadas</strong>
+              <small id="step10Meta">Status 101 e Status 102 isolados</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="11">
+            <span class="step-num">&Delta;</span>
+            <span class="step-info">
+              <strong>Divergências e Faltantes</strong>
+              <small id="step11Meta">Matriz cruzada e chaves 44d</small>
+            </span>
+          </button>
+        </li>
+      </ol>
+
+      <div class="stepper-header">Fluxo de Importação &amp; Lotes</div>
+      <ol class="stepper-list">
+        <li>
+          <button type="button" class="step-btn active" data-step="1">
+            <span class="step-num">1</span>
+            <span class="step-info">
+              <strong>Importar XMLs (55/65)</strong>
+              <small id="step1Meta">Pasta, .zip, .rar ou .xml</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="2">
+            <span class="step-num">2</span>
+            <span class="step-info">
+              <strong>Importar Relatório PDF</strong>
+              <small id="step2Meta">Texto selecionável ou OCR</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="3">
+            <span class="step-num">3</span>
+            <span class="step-info">
+              <strong>Revisar &amp; Mapear Dados</strong>
+              <small id="step3Meta">Colunas PDF e prévia XML</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="4">
+            <span class="step-num">4</span>
+            <span class="step-info">
+              <strong>Configurar Firebird</strong>
+              <small id="step4Meta">Opcional (Versões 2.5 e 5.0)</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="5">
+            <span class="step-num">5</span>
+            <span class="step-info">
+              <strong>Executar Conciliação</strong>
+              <small id="step5Meta">Critérios e processamento</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="6">
+            <span class="step-num">6</span>
+            <span class="step-info">
+              <strong>Revisar Divergências</strong>
+              <small id="step6Meta">Painel, filtros e auditoria</small>
+            </span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="step-btn" data-step="7">
+            <span class="step-num">7</span>
+            <span class="step-info">
+              <strong>Exportar Resultados</strong>
+              <small id="step7Meta">CSV, Excel (.xlsx) e PDF</small>
+            </span>
+          </button>
+        </li>
+      </ol>
+
+      <div class="sidebar-footer-card">
+        <h4>Preservação de Originais</h4>
+        <p>
+          Os arquivos selecionados e a base <code>.FDB</code> são lidos em modo estrito somente-leitura. Seus arquivos originais nunca são alterados nem excluídos.
+        </p>
+      </div>
+    </nav>
+
+    <main class="workspace-main">
+      <!-- ================================================================== -->
+      <!-- PAINEL FIXO DE TOPO: 5 CARDS KPI & COMPARATIVO TRIPLO              -->
+      <!-- ================================================================== -->
+      <div class="card" id="execAuditTopDashboard" style="margin-bottom:18px;border-left:4px solid #0284c7;">
+        <div class="card-header" style="margin-bottom:10px;">
+          <div>
+            <h3 style="margin:0;">Visão Geral &amp; Conciliação Automática (Banco vs. XML vs. Relatório PDF)</h3>
+            <small class="text-muted" id="execAuditCompetenceSubtitle">Base ativa: Por Data de Emissão (tb_nfvenda.dt_emissao vs tb_nfe.data_hora)</small>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm btn-outline" data-goto="8">NF-e (55)</button>
+            <button type="button" class="btn btn-sm btn-outline" data-goto="9">NFC-e (65)</button>
+            <button type="button" class="btn btn-sm btn-outline" data-goto="10">Canceladas/Inut. (101/102)</button>
+            <button type="button" class="btn btn-sm btn-outline" data-goto="11">Matriz de Divergências</button>
+            <button type="button" class="btn btn-sm btn-primary" data-export="xlsx">Exportar .XLSX</button>
+            <button type="button" class="btn btn-sm btn-secondary" data-export="pdf">Exportar .PDF</button>
+          </div>
+        </div>
+        <div class="kpi-grid" id="execTopKpiCardsGrid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));"></div>
+        <div class="table-responsive mt-12">
+          <table class="data-table" id="execTripleComparisonTable">
+            <thead>
+              <tr>
+                <th>Escopo / Modelo</th>
+                <th>Banco (Emissão)</th>
+                <th>Banco (Autorização SEFAZ)</th>
+                <th>Desafio Temporal (D+1)</th>
+                <th>Total XMLs (Status 100)</th>
+                <th>Total Relatório PDF</th>
+                <th>Status de Batimento</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- ================================================================== -->
+      <!-- ETAPA 1: IMPORTAR XMLs COMPACTADOS (.ZIP, .RAR, .XML)               -->
+      <!-- ================================================================== -->
+      <section id="step-1" class="step-panel active" aria-labelledby="title-step-1">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Etapa 1 de 7</span>
+            <h2 id="title-step-1">Importar Arquivos XML de Documentos Fiscais</h2>
+            <p>
+              Selecione arquivos compactados (<code>.zip</code> ou <code>.rar</code> com suporte automático a subpastas) ou arquivos <code>.xml</code> avulsos de NF-e (55), NFC-e (65), CF-e SAT (59) e Eventos de Cancelamento.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-primary" data-goto="2">Avançar para Etapa 2 &rarr;</button>
+          </div>
+        </div>
+
+        <div class="upload-dropzone" id="xmlDropzone">
+          <input type="file" id="xmlFileInput" multiple accept=".zip,.rar,.xml" class="sr-only" />
+          <div class="dropzone-icon" aria-hidden="true">&#128230;</div>
+          <h3>Arraste seus arquivos <code>.zip</code>, <code>.rar</code> ou <code>.xml</code> aqui (NF-e 55 e NFC-e 65)</h3>
+          <p>Extração recursiva de subpastas • Separação automática NF-e (55) e NFC-e (65) • Cancelamentos (101) e Inutilizações (102)</p>
+          <div class="dropzone-buttons">
+            <label for="xmlFileInput" class="btn btn-primary">Selecionar Arquivos (.zip, .rar, .xml)</label>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:center;align-items:center;margin-top:12px;max-width:620px;margin-left:auto;margin-right:auto;">
+            <input type="text" id="xmlFolderInputPath" class="form-control form-control-sm" placeholder="Ou informe o caminho de uma pasta local de XMLs (ex: C:\XMLs\Outubro)" />
+            <button type="button" class="btn btn-sm btn-secondary" id="btnImportXmlFolder">Ler Pasta Local</button>
+          </div>
+          <small class="security-note">Limite de segurança: até 150 MB por arquivo. Proteção ativa contra Path Traversal, XXE e ZipBomb.</small>
+        </div>
+
+        <!-- Resumo da Importação de XMLs -->
+        <div id="xmlResultContainer" class="hidden">
+          <div class="kpi-grid" id="xmlKpiGrid"></div>
+
+          <!-- Lista de Pacotes Importados -->
+          <div class="card mt-16">
+            <div class="card-header">
+              <h3>Arquivos e Pacotes Processados</h3>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="xmlContainersTable">
+                <thead>
+                  <tr>
+                    <th>Arquivo Importado</th>
+                    <th>Tipo</th>
+                    <th>Tamanho</th>
+                    <th>XMLs Extraídos</th>
+                    <th>Não-XML Ignorados</th>
+                    <th>Alertas / Erros</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Erros e Alertas por Arquivo (sem interromper os demais) -->
+          <div class="card mt-16" id="xmlAlertsCard">
+            <div class="card-header">
+              <h3>Ocorrências por Arquivo (Inválidos, Não-Venda ou Corrompidos)</h3>
+              <span class="badge badge-neutral-alert" id="xmlAlertsCountBadge">0 ocorrências</span>
+            </div>
+            <p class="card-desc">
+              Arquivos com falha estrutural ou operações que não são de venda (ex: NF-e de entrada ou devolução) são isolados abaixo sem interromper a análise dos demais documentos.
+            </p>
+            <div class="table-responsive">
+              <table class="data-table" id="xmlAlertsTable">
+                <thead>
+                  <tr>
+                    <th>Arquivo / Caminho Interno</th>
+                    <th>Etapa de Validação</th>
+                    <th>Diagnóstico Detalhado</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- ETAPA 2: IMPORTAR RELATÓRIO DE VENDAS EM PDF                       -->
+      <!-- ================================================================== -->
+      <section id="step-2" class="step-panel" aria-labelledby="title-step-2">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Etapa 2 de 7</span>
+            <h2 id="title-step-2">Importar Relatório de Vendas em PDF</h2>
+            <p>
+              Importe o relatório gerencial ou fiscal em PDF emitido pelo seu ERP/PDV. Se o PDF for digitalizado como imagem, você será avisado e poderá aplicar OCR local.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="1">&larr; Voltar</button>
+            <button type="button" class="btn btn-primary" data-goto="3">Revisar e Mapear Dados &rarr;</button>
+          </div>
+        </div>
+
+        <div class="upload-dropzone" id="pdfDropzone">
+          <input type="file" id="pdfFileInput" accept=".pdf" class="sr-only" />
+          <div class="dropzone-icon" aria-hidden="true">&#128196;</div>
+          <h3>Selecione ou arraste o relatório de vendas em <code>.pdf</code></h3>
+          <p>Extração automática de data, número, série, valor total, forma de pagamento, status e chave de acesso</p>
+          <div class="dropzone-buttons">
+            <label for="pdfFileInput" class="btn btn-primary">Selecionar Relatório PDF</label>
+          </div>
+        </div>
+
+        <!-- Alerta de PDF Digitalizado / Imagem (com botão de OCR Local) -->
+        <div id="pdfScannedAlert" class="alert-box alert-warning hidden mt-16" role="alert">
+          <div class="alert-content">
+            <h4>&#9888; PDF Digitalizado como Imagem Detectado (Sem Texto Selecionável)</h4>
+            <p id="pdfScannedMessage"></p>
+          </div>
+          <div class="alert-actions">
+            <button type="button" class="btn btn-warning" id="btnRunPdfOcr">
+              Executar OCR Local no PDF
+            </button>
+          </div>
+        </div>
+
+        <!-- Resumo do PDF Importado -->
+        <div id="pdfResultContainer" class="hidden mt-16">
+          <div class="kpi-grid" id="pdfKpiGrid"></div>
+
+          <div class="card mt-16">
+            <div class="card-header">
+              <h3>Texto Bruto Reconhecido do PDF (Amostra)</h3>
+              <span class="badge badge-info" id="pdfMethodBadge">Método: Tabular</span>
+            </div>
+            <pre class="code-preview" id="pdfRawTextPreview"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- ETAPA 3: REVISAR OS DADOS EXTRAÍDOS E MAPEAR CAMPOS                -->
+      <!-- ================================================================== -->
+      <section id="step-3" class="step-panel" aria-labelledby="title-step-3">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Etapa 3 de 7</span>
+            <h2 id="title-step-3">Revisar Dados Extraídos e Mapear Colunas do PDF</h2>
+            <p>
+              Confirme ou ajuste o mapeamento das colunas do relatório PDF, edite valores manualmente se necessário e inspecione os XMLs lidos antes da conciliação.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="2">&larr; Voltar</button>
+            <button type="button" class="btn btn-primary" data-goto="4">Configurar Firebird (Opcional) &rarr;</button>
+          </div>
+        </div>
+
+        <div class="subtabs">
+          <button type="button" class="subtab-btn active" data-subtab="tab-review-pdf">
+            1. Mapeamento e Prévia Editável do PDF (<span id="tabPdfCount">0</span>)
+          </button>
+          <button type="button" class="subtab-btn" data-subtab="tab-review-xml">
+            2. Documentos Extraídos dos XMLs (<span id="tabXmlCount">0</span>)
+          </button>
+        </div>
+
+        <!-- ABA 3.1: Mapeamento de Colunas do PDF + Prévia Editável -->
+        <div id="tab-review-pdf" class="subtab-content active">
+          <div class="card">
+            <div class="card-header">
+              <h3>Mapeamento das Colunas do Relatório PDF</h3>
+              <button type="button" class="btn btn-sm btn-secondary" id="btnApplyPdfMapping">
+                Reaplicar Mapeamento nas Linhas do PDF
+              </button>
+            </div>
+            <p class="card-desc">
+              Relatórios de diferentes sistemas podem variar a ordem das colunas. Confirme abaixo qual coluna extraída corresponde a cada campo fiscal:
+            </p>
+            <div class="form-grid-4" id="pdfMappingForm">
+              <div class="form-group">
+                <label for="mapPdfDate">Coluna de Data de Emissão</label>
+                <select id="mapPdfDate" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label for="mapPdfNumber">Coluna de Número do Documento</label>
+                <select id="mapPdfNumber" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label for="mapPdfSeries">Coluna de Série</label>
+                <select id="mapPdfSeries" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label for="mapPdfModel">Coluna de Modelo (55/65)</label>
+                <select id="mapPdfModel" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label for="mapPdfValue">Coluna de Valor Total da Venda</label>
+                <select id="mapPdfValue" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label for="mapPdfPayment">Coluna de Forma de Pagamento</label>
+                <select id="mapPdfPayment" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label for="mapPdfStatus">Coluna de Status / Situação</label>
+                <select id="mapPdfStatus" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label for="mapPdfKey">Coluna de Chave de Acesso</label>
+                <select id="mapPdfKey" class="form-control"></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-16">
+            <div class="card-header">
+              <div>
+                <h3>Prévia Editável dos Registros Extraídos do PDF</h3>
+                <p class="card-desc">Você pode revisar, corrigir qualquer campo manualmente, excluir linhas de subtotal ou adicionar registros antes da conciliação.</p>
+              </div>
+              <div class="card-actions">
+                <button type="button" class="btn btn-sm btn-outline" id="btnAddPdfRow">+ Adicionar Linha Manual</button>
+                <button type="button" class="btn btn-sm btn-primary" id="btnSavePdfEdits">Salvar Revisão do PDF</button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="pdfEditableTable">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Data Emissão (AAAA-MM-DD)</th>
+                    <th>Número</th>
+                    <th>Série</th>
+                    <th>Modelo</th>
+                    <th>Valor Total (R$)</th>
+                    <th>Forma de Pagamento</th>
+                    <th>Status</th>
+                    <th>Chave de Acesso (Opcional)</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA 3.2: Prévia dos Documentos XML Extraídos -->
+        <div id="tab-review-xml" class="subtab-content">
+          <div class="card">
+            <div class="card-header">
+              <h3>Documentos Lidos dos Arquivos XML</h3>
+              <span class="text-muted">Inclui destaque para duplicados, cancelados, denegados, não-venda e campos ausentes no XML</span>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="xmlPreviewTable">
+                <thead>
+                  <tr>
+                    <th>Arquivo / Subpasta</th>
+                    <th>Tipo / Mod</th>
+                    <th>Número / Série</th>
+                    <th>Emissão</th>
+                    <th>Autorização</th>
+                    <th>Status SEFAZ</th>
+                    <th>Valor Total</th>
+                    <th>Desconto / Acrésc.</th>
+                    <th>Pagamento</th>
+                    <th>Campos Ausentes / Avisos</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- ETAPA 4: CONFIGURAR E TESTAR O FIREBIRD (2.5 OU 5.0)               -->
+      <!-- ================================================================== -->
+      <section id="step-4" class="step-panel" aria-labelledby="title-step-4">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Etapa 4 de 7 (Opcional)</span>
+            <h2 id="title-step-4">Integração e Mapeamento de Banco Firebird (2.5 ou 5.0)</h2>
+            <p>
+              Configure uma conexão somente-leitura com sua base local Firebird 2.5 (ODS 11.2) ou Firebird 5.0 (ODS 13.1), descubra as tabelas do esquema e mapeie os campos de vendas.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="3">&larr; Voltar</button>
+            <button type="button" class="btn btn-primary" data-goto="5">Ir para Conciliação &rarr;</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>1. Parâmetros de Conexão Local Firebird</h3>
+            <label class="toggle-switch">
+              <input type="checkbox" id="fbEnableToggle" />
+              <span>Habilitar confronto com Firebird na conciliação</span>
+            </label>
+          </div>
+
+          <div class="form-grid-4">
+            <div class="form-group">
+              <label for="fbVersionTarget">Versão do Firebird</label>
+              <select id="fbVersionTarget" class="form-control">
+                <option value="auto">Auto-detectar (2.5 ou 5.0 via ODS/SQL)</option>
+                <option value="2.5">Firebird 2.5 (ODS 11.2)</option>
+                <option value="5.0">Firebird 5.0 (ODS 13.1)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="fbHost">Host / Endereço Local</label>
+              <input type="text" id="fbHost" class="form-control" value="127.0.0.1" placeholder="127.0.0.1 ou localhost" />
+            </div>
+            <div class="form-group">
+              <label for="fbPort">Porta TCP</label>
+              <input type="number" id="fbPort" class="form-control" value="3050" placeholder="3050" />
+            </div>
+            <div class="form-group">
+              <label for="fbCharset">Charset da Conexão</label>
+              <select id="fbCharset" class="form-control">
+                <option value="UTF8">UTF8</option>
+                <option value="WIN1252">WIN1252</option>
+                <option value="ISO8859_1">ISO8859_1</option>
+                <option value="NONE">NONE</option>
+              </select>
+            </div>
+            <div class="form-group span-2">
+              <label for="fbDatabase">Caminho Absoluto do Banco (<code>.fdb</code> / <code>.gdb</code>) ou Alias</label>
+              <input type="text" id="fbDatabase" class="form-control" placeholder="Ex: C:\Dados\ERP\BANCO_FISCAL.FDB" />
+            </div>
+            <div class="form-group">
+              <label for="fbUser">Usuário</label>
+              <input type="text" id="fbUser" class="form-control" value="SYSDBA" />
+            </div>
+            <div class="form-group">
+              <label for="fbPassword">Senha (Criptografada em repouso)</label>
+              <input type="password" id="fbPassword" class="form-control" placeholder="••••••••" autocomplete="off" />
+            </div>
+          </div>
+
+          <div class="form-actions-bar mt-16">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="fbSaveEncrypted" checked />
+              <span>Salvar configuração localmente com senha protegida por AES-256-GCM (nunca em texto puro)</span>
+            </label>
+            <div class="btn-group">
+              <button type="button" class="btn btn-secondary" id="btnTestFirebird">
+                Testar Conexão &amp; Identificar Versão
+              </button>
+              <button type="button" class="btn btn-primary" id="btnDiscoverSchema">
+                Descobrir Esquema (Tabelas e Colunas)
+              </button>
+            </div>
+          </div>
+
+          <div id="fbConnectionFeedback" class="alert-box hidden mt-16"></div>
+        </div>
+
+        <!-- Descoberta de Esquema e Mapeamento de Tabela/Colunas -->
+        <div id="fbSchemaSection" class="card mt-16 hidden">
+          <div class="card-header">
+            <div>
+              <h3>2. Descoberta do Esquema e Mapeamento de Campos</h3>
+              <p class="card-desc">
+                Nenhum nome de tabela ou coluna é presumido. Selecione a tabela ou view de vendas descoberta no catálogo do Firebird e associe as colunas correspondentes:
+              </p>
+            </div>
+            <span class="badge badge-info" id="fbDetectedVersionBadge">Firebird</span>
+          </div>
+
+          <div class="form-grid-4">
+            <div class="form-group span-2">
+              <label for="fbTableSelect">Tabela ou View de Documentos Fiscais / Vendas</label>
+              <select id="fbTableSelect" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColNumber">Coluna: Número do Documento *</label>
+              <select id="fbColNumber" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColSeries">Coluna: Série *</label>
+              <select id="fbColSeries" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColModel">Coluna: Modelo Fiscal (55/65)</label>
+              <select id="fbColModel" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColAccessKey">Coluna: Chave de Acesso (44 díg.)</label>
+              <select id="fbColAccessKey" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColIssueDate">Coluna: Data de Emissão *</label>
+              <select id="fbColIssueDate" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColAuthDate">Coluna: Data de Autorização</label>
+              <select id="fbColAuthDate" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColTotalValue">Coluna: Valor Total da Venda *</label>
+              <select id="fbColTotalValue" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColStatus">Coluna: Status / Situação *</label>
+              <select id="fbColStatus" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColPayment">Coluna: Forma de Pagamento</label>
+              <select id="fbColPayment" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="fbColCustomer">Coluna: CNPJ/CPF Destinatário</label>
+              <select id="fbColCustomer" class="form-control"></select>
+            </div>
+          </div>
+
+          <div class="form-actions-bar mt-16">
+            <span class="text-muted">&#128274; Todas as consultas são validadas e executadas em transação estrita <code>READ ONLY</code>.</span>
+            <button type="button" class="btn btn-primary" id="btnPreviewFirebird">
+              Gerar Prévia do Mapeamento (Somente Leitura)
+            </button>
+          </div>
+
+          <div id="fbPreviewContainer" class="hidden mt-16">
+            <h4>Consulta SQL Somente-Leitura Gerada:</h4>
+            <pre class="code-preview" id="fbPreviewSqlBox"></pre>
+            <h4 class="mt-12">Amostra de Registros Mapeados do Firebird:</h4>
+            <div class="table-responsive">
+              <table class="data-table" id="fbPreviewTable">
+                <thead>
+                  <tr>
+                    <th>Número</th>
+                    <th>Série</th>
+                    <th>Modelo</th>
+                    <th>Data Emissão</th>
+                    <th>Data Autorização</th>
+                    <th>Valor Total</th>
+                    <th>Status</th>
+                    <th>Forma Pagto</th>
+                    <th>Chave de Acesso</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- ETAPA 5: EXECUTAR A CONCILIAÇÃO                                    -->
+      <!-- ================================================================== -->
+      <section id="step-5" class="step-panel" aria-labelledby="title-step-5">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Etapa 5 de 7</span>
+            <h2 id="title-step-5">Configurar Critérios e Executar Conciliação</h2>
+            <p>
+              Defina os parâmetros de confronto entre os XMLs, o relatório em PDF e o banco Firebird.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="4">&larr; Voltar</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Resumo das Fontes Prontas para Confronto</h3>
+          <div class="kpi-grid mt-12" id="preReconcileSummaryGrid"></div>
+        </div>
+
+        <div class="card mt-16">
+          <h3>Critérios de Comparação e Regras de Auditoria</h3>
+          <div class="form-grid-3 mt-12">
+            <div class="form-group">
+              <label for="recDateFieldSelect">Critério de Data Principal</label>
+              <select id="recDateFieldSelect" class="form-control">
+                <option value="issueDate">Data de Emissão do Documento (dhEmi)</option>
+                <option value="authDate">Data de Autorização SEFAZ (dhRecbto)</option>
+              </select>
+              <small class="field-hint">
+                Você também poderá alternar entre Data de Emissão e Data de Autorização instantaneamente na tela de resultados.
+              </small>
+            </div>
+
+            <div class="form-group">
+              <label for="recComparePaymentSelect">Confronto de Forma de Pagamento</label>
+              <select id="recComparePaymentSelect" class="form-control">
+                <option value="true">Sim — Sinalizar divergências de meio de pagamento</option>
+                <option value="false">Não — Ignorar diferenças de forma de pagamento</option>
+              </select>
+              <small class="field-hint">
+                Compara o meio de pagamento do XML (<code>&lt;pag&gt;</code>) com o informado no PDF.
+              </small>
+            </div>
+
+            <div class="form-group">
+              <label for="recUseFirebirdSelect">Confronto com Banco Firebird</label>
+              <select id="recUseFirebirdSelect" class="form-control">
+                <option value="false">Apenas XML &times; Relatório PDF</option>
+                <option value="true">Conciliação em 3 Vias (XML &times; PDF &times; Firebird)</option>
+              </select>
+              <small class="field-hint">
+                Quando ativo, verifica a presença e consistência de cada venda também nos registros do Firebird.
+              </small>
+            </div>
+          </div>
+
+          <div class="policy-callout mt-16">
+            <strong>Política de Correspondência Determinística Ativa:</strong>
+            <ul>
+              <li>Nenhuma correspondência silenciosa é feita com base apenas em valores aproximados ou iguais sem identificação documental.</li>
+              <li>Todo vínculo exibe explicitamente o critério utilizado (Chave de Acesso de 44 dígitos ou Número + Série).</li>
+              <li>Candidatos ambíguos são retidos em <strong>Registros que precisam de revisão manual</strong> para confirmação ou rejeição pelo auditor.</li>
+            </ul>
+          </div>
+
+          <div class="center-action mt-20">
+            <button type="button" class="btn btn-lg btn-primary" id="btnExecuteReconciliation">
+              Executar Conciliação Fiscal Agora &rarr;
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- ETAPA 6: REVISAR DIVERGÊNCIAS E PAINEL DE RESULTADOS               -->
+      <!-- ================================================================== -->
+      <section id="step-6" class="step-panel" aria-labelledby="title-step-6">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Etapa 6 de 7</span>
+            <h2 id="title-step-6">Painel de Conciliação e Revisão de Divergências</h2>
+            <p>
+              Inspecione os resultados por categoria, alterne entre Data de Emissão e Autorização, filtre registros e tome decisões sobre casos ambíguos.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <div class="inline-date-toggle">
+              <label for="quickDateModeSelect">Analisar por:</label>
+              <select id="quickDateModeSelect" class="form-control form-control-sm">
+                <option value="issueDate">Data de Emissão</option>
+                <option value="authDate">Data de Autorização</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-primary" data-goto="7">Exportar Resultados &rarr;</button>
+          </div>
+        </div>
+
+        <!-- Comparativo Geral de Fontes -->
+        <div class="source-comparison-bar" id="sourceComparisonBar"></div>
+
+        <!-- Cards das 9 Categorias de Conciliação (Clicáveis para filtrar) -->
+        <div class="category-cards-grid mt-16" id="categoryCardsGrid"></div>
+
+        <!-- Barra de Filtros Avançados -->
+        <div class="card mt-16">
+          <div class="card-header">
+            <h3>Filtros de Auditoria e Pesquisa</h3>
+            <button type="button" class="btn btn-sm btn-outline" id="btnClearFilters">Limpar Filtros</button>
+          </div>
+          <div class="form-grid-4">
+            <div class="form-group">
+              <label for="filterCategory">Categoria de Conciliação</label>
+              <select id="filterCategory" class="form-control">
+                <option value="ALL">Todas as categorias (9)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="filterStatus">Status Fiscal</label>
+              <select id="filterStatus" class="form-control">
+                <option value="ALL">Todos os status</option>
+                <option value="AUTORIZADO">Autorizado</option>
+                <option value="CANCELADO">Cancelado</option>
+                <option value="DENEGADO">Denegado</option>
+                <option value="INUTILIZADO">Inutilizado</option>
+                <option value="NAO_VENDA">Não é venda (Entrada/Devolução)</option>
+                <option value="INVALIDO">Inválido / Sem Protocolo</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="filterDateFrom">Período: Data Inicial</label>
+              <input type="date" id="filterDateFrom" class="form-control" />
+            </div>
+            <div class="form-group">
+              <label for="filterDateTo">Período: Data Final</label>
+              <input type="date" id="filterDateTo" class="form-control" />
+            </div>
+            <div class="form-group">
+              <label for="filterNumber">Número do Documento</label>
+              <input type="text" id="filterNumber" class="form-control" placeholder="Ex: 1003" />
+            </div>
+            <div class="form-group">
+              <label for="filterSeries">Série</label>
+              <input type="text" id="filterSeries" class="form-control" placeholder="Ex: 1" />
+            </div>
+            <div class="form-group">
+              <label for="filterPayment">Forma de Pagamento</label>
+              <select id="filterPayment" class="form-control">
+                <option value="ALL">Todas as formas</option>
+                <option value="PIX">PIX</option>
+                <option value="Cartão de Crédito">Cartão de Crédito</option>
+                <option value="Cartão de Débito">Cartão de Débito</option>
+                <option value="Dinheiro">Dinheiro</option>
+                <option value="Boleto">Boleto Bancário</option>
+                <option value="Vale">Vale Refeição / Alimentação</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="filterSearch">Busca Livre (Chave, CNPJ/CPF, Motivo)</label>
+              <input type="search" id="filterSearch" class="form-control" placeholder="Digite chave, nome, motivo..." />
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabela Principal de Resultados da Conciliação -->
+        <div class="card mt-16">
+          <div class="card-header">
+            <h3>Registros Analisados (<span id="filteredItemsCount">0</span> exibidos)</h3>
+            <span class="text-muted">Clique em "Inspecionar / Revisar" para ver os detalhes de origem e tomar decisões manuais</span>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="reconciliationTable">
+              <thead>
+                <tr>
+                  <th>Categoria</th>
+                  <th>Doc / Série</th>
+                  <th>Tipo</th>
+                  <th>Data Ref.</th>
+                  <th>Status</th>
+                  <th>Pagamento</th>
+                  <th>Valor XML</th>
+                  <th>Valor PDF</th>
+                  <th>Valor Firebird</th>
+                  <th>Dif. Valor</th>
+                  <th>Critério e Motivo da Classificação</th>
+                  <th>Ação</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- ETAPA 7: EXPORTAR O RESULTADO (CSV, EXCEL, PDF)                    -->
+      <!-- ================================================================== -->
+      <section id="step-7" class="step-panel" aria-labelledby="title-step-7">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Etapa 7 de 7</span>
+            <h2 id="title-step-7">Exportar Relatórios de Conciliação Fiscal</h2>
+            <p>
+              Exporte os resultados consolidados ou filtrados para planilha CSV, pasta de trabalho Excel (<code>.xlsx</code>) ou Relatório Executivo em PDF.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="6">&larr; Voltar para Revisão</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Metadados de Auditoria Incluídos na Exportação</h3>
+          <p class="card-desc">
+            Todos os arquivos exportados registram automaticamente as informações de rastreabilidade abaixo:
+          </p>
+          <div class="metadata-preview-grid mt-12" id="exportMetadataPreview"></div>
+        </div>
+
+        <div class="export-cards-grid mt-16">
+          <div class="card export-option-card">
+            <div class="export-icon" aria-hidden="true">&#128202;</div>
+            <h3>Exportar Planilha Excel (<code>.xlsx</code>)</h3>
+            <p>
+              Gera arquivo Excel formatado com múltiplas abas: <strong>Resumo Executivo &amp; Metadados</strong>, <strong>Registros Exportados</strong> e <strong>Apenas Divergências e Alertas</strong>.
+            </p>
+            <button type="button" class="btn btn-primary btn-block mt-12" data-export="xlsx">
+              Baixar Excel (.xlsx)
+            </button>
+          </div>
+
+          <div class="card export-option-card">
+            <div class="export-icon" aria-hidden="true">&#128196;</div>
+            <h3>Gerar Relatório de Auditoria (<code>.pdf</code>)</h3>
+            <p>
+              Gera documento PDF em formato paisagem com cabeçalho institucional, arquivos analisados, filtros ativos, quadro resumo por categoria e listagem detalhada.
+            </p>
+            <button type="button" class="btn btn-primary btn-block mt-12" data-export="pdf">
+              Baixar Relatório PDF (.pdf)
+            </button>
+          </div>
+
+          <div class="card export-option-card">
+            <div class="export-icon" aria-hidden="true">&#128221;</div>
+            <h3>Exportar Arquivo CSV (<code>.csv</code>)</h3>
+            <p>
+              Arquivo texto estruturado em UTF-8 com BOM e delimitador ponto-e-vírgula (<code>;</code>), pronto para importação direta em planilhas ou sistemas contábeis.
+            </p>
+            <button type="button" class="btn btn-secondary btn-block mt-12" data-export="csv">
+              Baixar Arquivo CSV (.csv)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- MÓDULO 8: CONCILIAÇÃO NF-e (MODELO 55) + TABELAS CFOP E NCM        -->
+      <!-- ================================================================== -->
+      <section id="step-8" class="step-panel" aria-labelledby="title-step-8">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Módulo de Auditoria Fiscal — Modelo 55</span>
+            <h2 id="title-step-8">Conciliação NF-e (Modelo 55) &amp; Agrupamentos por CFOP / NCM</h2>
+            <p>
+              Confronto de Notas Fiscais Eletrônicas (Modelo 55) entre <code>tb_nfvenda</code> / <code>tb_nfe</code>, Lote XML e Relatório PDF, com tabelas dinâmicas de Base de Cálculo, ICMS e Valor Contábil por CFOP e NCM.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="9">Ir para NFC-e (65) &rarr;</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Tabela Dinâmica por CFOP — NF-e (Modelo 55)</h3>
+          <div class="table-responsive mt-12">
+            <table class="data-table" id="cfopTable55">
+              <thead>
+                <tr>
+                  <th>CFOP</th>
+                  <th>Qtd Notas Banco</th>
+                  <th>Base de Cálculo Banco</th>
+                  <th>Valor ICMS Banco</th>
+                  <th>Valor Contábil Banco</th>
+                  <th>Qtd Notas XML</th>
+                  <th>Base de Cálculo XML</th>
+                  <th>Valor ICMS XML</th>
+                  <th>Valor Contábil XML</th>
+                  <th>Diferença (R$)</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card mt-16">
+          <h3>Tabela Dinâmica por NCM — NF-e (Modelo 55)</h3>
+          <div class="table-responsive mt-12">
+            <table class="data-table" id="ncmTable55">
+              <thead>
+                <tr>
+                  <th>NCM</th>
+                  <th>Descrição do Produto / Mercadoria</th>
+                  <th>Qtd Itens Banco</th>
+                  <th>Base de Cálculo Banco</th>
+                  <th>Valor Contábil Banco</th>
+                  <th>Qtd Itens XML</th>
+                  <th>Base de Cálculo XML</th>
+                  <th>Valor Contábil XML</th>
+                  <th>Diferença (R$)</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- MÓDULO 9: CONCILIAÇÃO NFC-e (MODELO 65) + TABELAS CFOP E NCM       -->
+      <!-- ================================================================== -->
+      <section id="step-9" class="step-panel" aria-labelledby="title-step-9">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Módulo de Auditoria Fiscal — Modelo 65</span>
+            <h2 id="title-step-9">Conciliação NFC-e (Modelo 65) &amp; Agrupamentos por CFOP / NCM</h2>
+            <p>
+              Confronto de Notas Fiscais de Consumidor Eletrônicas (Modelo 65) entre <code>tb_nfvenda</code> / <code>tb_nfe</code>, Lote XML e Relatório PDF, com tabelas dinâmicas de Base de Cálculo, ICMS e Valor Contábil por CFOP e NCM.
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="10">Ver Canceladas e Inutilizadas &rarr;</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Tabela Dinâmica por CFOP — NFC-e (Modelo 65)</h3>
+          <div class="table-responsive mt-12">
+            <table class="data-table" id="cfopTable65">
+              <thead>
+                <tr>
+                  <th>CFOP</th>
+                  <th>Qtd Notas Banco</th>
+                  <th>Base de Cálculo Banco</th>
+                  <th>Valor ICMS Banco</th>
+                  <th>Valor Contábil Banco</th>
+                  <th>Qtd Notas XML</th>
+                  <th>Base de Cálculo XML</th>
+                  <th>Valor ICMS XML</th>
+                  <th>Valor Contábil XML</th>
+                  <th>Diferença (R$)</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card mt-16">
+          <h3>Tabela Dinâmica por NCM — NFC-e (Modelo 65)</h3>
+          <div class="table-responsive mt-12">
+            <table class="data-table" id="ncmTable65">
+              <thead>
+                <tr>
+                  <th>NCM</th>
+                  <th>Descrição do Produto / Mercadoria</th>
+                  <th>Qtd Itens Banco</th>
+                  <th>Base de Cálculo Banco</th>
+                  <th>Valor Contábil Banco</th>
+                  <th>Qtd Itens XML</th>
+                  <th>Base de Cálculo XML</th>
+                  <th>Valor Contábil XML</th>
+                  <th>Diferença (R$)</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- MÓDULO 10: EVENTOS SEPARADOS — CANCELADAS (101) E INUTILIZADAS (102)-->
+      <!-- ================================================================== -->
+      <section id="step-10" class="step-panel" aria-labelledby="title-step-10">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Aba Exclusiva de Eventos SEFAZ</span>
+            <h2 id="title-step-10">Canceladas (Status 101) e Inutilizadas (Status 102)</h2>
+            <p>
+              Documentos com Status 101 (Cancelamento homologado) e Status 102 (Inutilização de numeração homologada) auditados separadamente sem poluir o faturamento líquido autorizado (Status 100).
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-outline" data-goto="11">Ir para Matriz de Divergências &rarr;</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="eventsKpiGrid"></div>
+
+        <div class="card mt-16">
+          <div class="card-header">
+            <h3>Relação de Notas Canceladas (101) e Numerações Inutilizadas (102)</h3>
+            <select id="eventsFilterSelect" class="form-control form-control-sm" style="width:240px;">
+              <option value="ALL">Todos os Eventos (101 + 102)</option>
+              <option value="101">Somente Canceladas (Status 101)</option>
+              <option value="102">Somente Inutilizadas (Status 102)</option>
+            </select>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="separateEventsTable">
+              <thead>
+                <tr>
+                  <th>Cód. Status</th>
+                  <th>Evento</th>
+                  <th>nf_numero</th>
+                  <th>Série / Mod</th>
+                  <th>id_nfe (Chave 44 dígitos)</th>
+                  <th>dt_emissao</th>
+                  <th>data_hora_sefaz</th>
+                  <th>status_des</th>
+                  <th>Valor</th>
+                  <th>Fontes</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================== -->
+      <!-- MÓDULO 11: MATRIZ DE DIVERGÊNCIAS & AUDITORIA DE CHAVES            -->
+      <!-- ================================================================== -->
+      <section id="step-11" class="step-panel" aria-labelledby="title-step-11">
+        <div class="panel-header">
+          <div>
+            <span class="step-kicker">Auditoria Cruzada de Chaves e Competência</span>
+            <h2 id="title-step-11">Matriz de Divergências &amp; Faltantes (Banco vs. XML vs. Relatório)</h2>
+            <p>
+              Identifica automaticamente documentos que constam no Relatório mas não no XML, no XML mas não no Relatório/Banco, no Banco mas sem XML correspondente, e divergências temporais D+1 (Emissão &ne; Autorização SEFAZ).
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-primary" data-export="xlsx">Exportar Matriz (.XLSX)</button>
+            <button type="button" class="btn btn-secondary" data-export="pdf">Exportar Auditoria (.PDF)</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>Grid de Conciliação Cruzada (<span id="matrixCountBadge">0</span> ocorrências)</h3>
+            <select id="matrixOriginFilterSelect" class="form-control form-control-sm" style="width:340px;">
+              <option value="ALL">Todas as Origens de Falha</option>
+              <option value="RELATORIO_SEM_XML">Consta no Relatório mas NÃO consta no XML</option>
+              <option value="XML_SEM_RELATORIO_OU_BANCO">Consta no XML mas NÃO consta no Relatório / Banco</option>
+              <option value="BANCO_SEM_XML">Consta no Banco mas não possui XML correspondente</option>
+              <option value="DIVERGENCIA_D_MAIS_1">Desafio Temporal D+1 (Emissão &ne; Autorização SEFAZ)</option>
+              <option value="OUTRAS">Divergência de Valor ou Chave Inválida</option>
+            </select>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="divergenceMatrixTable">
+              <thead>
+                <tr>
+                  <th>nf_numero</th>
+                  <th>Mod / Série</th>
+                  <th>id_nfe (Chave 44 dígitos)</th>
+                  <th>dt_emissao</th>
+                  <th>data_hora_sefaz</th>
+                  <th>status_des</th>
+                  <th>Valor</th>
+                  <th>Origem da Falha</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- MODAL DE DETALHES DA VENDA E DECISÃO DE REVISÃO MANUAL                 -->
+  <!-- ====================================================================== -->
+  <div id="itemDetailModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalItemTitle">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3 id="modalItemTitle">Detalhes da Venda e Auditoria de Origem</h3>
+          <p id="modalItemSubtitle" class="text-muted"></p>
+        </div>
+        <button type="button" class="btn-close" id="btnCloseDetailModal" aria-label="Fechar janela">&times;</button>
+      </div>
+      <div class="modal-body" id="modalItemBody"></div>
+    </div>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- MODAL DE ARMAZENAMENTO TEMPORÁRIO E SEGURANÇA LOCAL                    -->
+  <!-- ====================================================================== -->
+  <div id="storageModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalStorageTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h3 id="modalStorageTitle">Segurança, Privacidade e Dados Temporários Locais</h3>
+          <p class="text-muted">Transparência total sobre onde e como os dados são armazenados no seu computador</p>
+        </div>
+        <button type="button" class="btn-close" id="btnCloseStorageModal" aria-label="Fechar janela">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="policy-callout">
+          <strong>Operação 100% Local:</strong> Nenhum XML, PDF, senha ou registro do Firebird é transmitido para servidores externos. As credenciais de banco salvas localmente são criptografadas com <strong>AES-256-GCM</strong> e jamais aparecem em logs.
+        </div>
+
+        <div id="storageDetailsContainer" class="mt-16"></div>
+
+        <div class="card mt-16 danger-zone-card">
+          <h4>Limpeza de Dados Locais e Sessão</h4>
+          <p class="card-desc">
+            Você pode remover imediatamente todos os arquivos temporários, sessões em memória, logs técnicos e credenciais salvas. Seus arquivos originais fora da aplicação nunca são afetados.
+          </p>
+          <div class="form-actions-bar mt-12">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="chkKeepFbConfigOnClear" />
+              <span>Manter apenas a configuração de conexão Firebird criptografada</span>
+            </label>
+            <button type="button" class="btn btn-danger" id="btnConfirmClearStorage">
+              Remover Dados Temporários Locais
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

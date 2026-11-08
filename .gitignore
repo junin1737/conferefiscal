@@ -1,0 +1,22 @@
+# Ambientes e dependências locais
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Dados locais de execução, logs e credenciais criptografadas
+dados_locais/*.db
+dados_locais/*.db-journal
+dados_locais/*.db-wal
+dados_locais/config/
+dados_locais/logs/
+dados_locais/temp/
+.local_data/
+
+# Pacotes binários pesados de build local (distribuídos via GitHub Releases ou gerados via scripts/build_installer.py)
+instalador/*.exe
+instalador/*.zip
+build_temp/
+dist/

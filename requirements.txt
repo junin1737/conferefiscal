@@ -1,0 +1,6 @@
+# ConfereFiscal Python Local Application (Python 3.12+)
+# A aplicação Python utiliza a biblioteca padrão do Python 3.12 (sqlite3, tkinter, http.server, xml.etree, zipfile, zlib, hashlib)
+# para operar 100% offline sem exigir pacotes externos obrigatórios.
+# Caso deseje instalar drivers adicionais opcionais para servidores Firebird remotos em ambiente com internet:
+# fdb>=2.0.2
+# firebird-driver>=1.10.0

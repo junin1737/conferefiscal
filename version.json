@@ -1,0 +1,29 @@
+{
+  "appName": "ConfereFiscal",
+  "version": "1.1.0",
+  "channel": "stable",
+  "releaseDate": "2026-11-08",
+  "repository": "junin1737/conferefiscal",
+  "repositoryUrl": "https://github.com/junin1737/conferefiscal",
+  "branch": "main",
+  "installerAssetName": "Instalador_ConfereFiscal_Setup.exe",
+  "portableAssetName": "ConfereFiscal_Portatil_v1.1.0.zip",
+  "changelog": [
+    "v1.1.0 - Correção da leitura binária de valores (TB_NFVENDA_TOT e TB_NFV_ITEM) e remontagem de registros fragmentados SEFAZ (TB_NFE)",
+    "v1.1.0 - Carregamento e sincronização automática dos valores do banco ao aplicar o filtro de período",
+    "v1.1.0 - Esquema de versionamento integrado ao GitHub (junin1737/conferefiscal) com botão Atualizar na aplicação",
+    "v1.0.0 - Lançamento inicial do Dashboard Executivo de Conciliação e Auditoria Fiscal (NF-e 55 / NFC-e 65 / Firebird / XML / PDF)"
+  ],
+  "history": [
+    {
+      "version": "1.1.0",
+      "date": "2026-11-08",
+      "summary": "Correção de leitura de valores Firebird (TB_NFVENDA_TOT/TB_NFV_ITEM), auto-sync no filtro de período e atualizador GitHub integrado."
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-11-08",
+      "summary": "Versão inicial com conciliação tripla Banco Firebird vs. Lotes XML (.zip/.rar) vs. Relatório PDF."
+    }
+  ]
+}
