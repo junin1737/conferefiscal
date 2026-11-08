@@ -820,7 +820,7 @@ class ConfereFiscalDesktopApp:
 
         self.lbl_d1_header = tk.Label(
             d1_inner,
-            text="Notas emitidas num dia e autorizadas na SEFAZ em outro dia",
+            text="Notas autorizadas em outro dia que não batem na comparação",
             bg=PALETTE["card_bg"],
             fg=PALETTE["text_primary"],
             font=("Segoe UI", 10, "bold"),
@@ -836,7 +836,7 @@ class ConfereFiscalDesktopApp:
             ("id_nfe", "Chave de acesso", 315, "w"),
             ("dt_emissao", "Emissão", 100, "center"),
             ("data_hora_sefaz", "Autorização", 150, "center"),
-            ("status_des", "Situação na SEFAZ", 220, "w"),
+            ("status_des", "O que aconteceu", 260, "w"),
             ("valor", "Valor", 110, "e"),
         ]:
             self.tree_d1.heading(c, text=lbl)
@@ -1167,11 +1167,12 @@ class ConfereFiscalDesktopApp:
         f_row.pack(fill="x")
         for lbl, code in [
             ("Todas", "ALL"),
-            ("No relatório, sem XML", "RELATORIO_SEM_XML"),
-            ("No XML, fora do banco/relatório", "XML_SEM_RELATORIO_OU_BANCO"),
-            ("No banco, sem XML", "BANCO_SEM_XML"),
+            ("Falta no banco", "FALTA_BANCO"),
+            ("Falta no relatório", "FALTA_RELATORIO"),
+            ("Falta o XML", "FALTA_XML"),
+            ("Valor diferente", "DIVERGENCIA_VALOR"),
+            ("Sem chave de acesso", "CHAVE_INVALIDA_OU_AUSENTE"),
             ("Autorizada em outro dia", "DIVERGENCIA_D_MAIS_1"),
-            ("Valor ou chave diferente", "OUTRAS"),
         ]:
             tk.Radiobutton(
                 f_row,
@@ -1644,7 +1645,7 @@ class ConfereFiscalDesktopApp:
                 tree.delete(i)
 
         self.lbl_d1_header.config(
-            text="Notas emitidas num dia e autorizadas na SEFAZ em outro dia"
+            text="Notas autorizadas em outro dia que não batem na comparação"
         )
         self.lbl_sum_55.config(
             text="NF-e (modelo 55): informe o período para ver os dados."
@@ -1767,9 +1768,13 @@ class ConfereFiscalDesktopApp:
 
         for i in self.tree_d1.get_children():
             self.tree_d1.delete(i)
-        d1_list = self.audit_dashboard.get("dPlus1Records") or []
+        d1_list = self.audit_dashboard.get("dPlus1Problems") or []
+        d1_total = len(self.audit_dashboard.get("dPlus1Records") or [])
         self.lbl_d1_header.config(
-            text=f"Notas emitidas num dia e autorizadas na SEFAZ em outro dia: {len(d1_list)}"
+            text=(f"Notas autorizadas em outro dia que não batem na comparação: {len(d1_list)}"
+                  f"   (de {d1_total} autorizadas em data diferente da emissão)"
+                  if (self.xml_documents or self.pdf_records)
+                  else f"Notas autorizadas em outro dia: importe os XMLs ou o relatório para ver quais não batem ({d1_total} no banco)")
         )
         for idx, d in enumerate(d1_list[:500]):
             self.tree_d1.insert(
@@ -1782,7 +1787,7 @@ class ConfereFiscalDesktopApp:
                     d.get("id_nfe", "—"),
                     _fmt_date_br(d.get("dt_emissao")),
                     _fmt_datetime_br(d.get("data_hora_sefaz")),
-                    d.get("status_des", "—"),
+                    str(d.get("origem_falha", "—")).split("  •  emitida")[0],
                     _fmt_brl(d.get("valor")),
                 ),
                 tags=("warn" if idx % 2 == 0 else "odd",),
@@ -1978,28 +1983,25 @@ class ConfereFiscalDesktopApp:
 
         self.lbl_matrix_summary.config(
             text=(
-                f"Diferenças encontradas: {counts.get('total', len(rows))}"
+                (f"Diferenças encontradas: {counts.get('total', len(rows))}"
+                 if (self.xml_documents or self.pdf_records)
+                 else "Diferenças encontradas: importe os XMLs ou o relatório PDF para comparar com o banco")
             )
         )
 
         for idx, r in enumerate(rows):
-            c_falha = r.get("codigo_falha", "")
-            if f_code == "RELATORIO_SEM_XML" and c_falha != "RELATORIO_SEM_XML":
-                continue
-            if f_code == "XML_SEM_RELATORIO_OU_BANCO" and c_falha not in ("XML_SEM_RELATORIO_E_BANCO", "XML_SEM_BANCO", "XML_SEM_RELATORIO"):
-                continue
-            if f_code == "BANCO_SEM_XML" and c_falha != "BANCO_SEM_XML":
-                continue
-            if f_code == "DIVERGENCIA_D_MAIS_1" and c_falha != "DIVERGENCIA_D_MAIS_1":
-                continue
-            if f_code == "OUTRAS" and c_falha not in ("DIVERGENCIA_VALOR", "CHAVE_INVALIDA_OU_AUSENTE", "DIVERGENCIA_CHAVE_SERIE"):
+            codigos = r.get("codigos") or [r.get("codigo_falha", "")]
+            if f_code == "DIVERGENCIA_D_MAIS_1":
+                if not r.get("d_mais_1"):
+                    continue
+            elif f_code != "ALL" and f_code not in codigos:
                 continue
             if q_search:
                 hay = f"{r.get('nf_numero', '')} {r.get('id_nfe', '')} {r.get('origem_falha', '')}".lower()
                 if q_search not in hay:
                     continue
 
-            tag = "warn" if c_falha == "DIVERGENCIA_D_MAIS_1" else ("err" if idx % 2 == 0 else "odd")
+            tag = "warn" if r.get("d_mais_1") else ("err" if idx % 2 == 0 else "odd")
             self.tree_matrix.insert(
                 "",
                 "end",

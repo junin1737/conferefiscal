@@ -713,18 +713,20 @@ def build_audit_dashboard_report(
     db_active_all = [d for d in norm_db_docs if d["in_active_period"]]
     db_by_key: Dict[str, Dict[str, Any]] = {}
     db_by_mod_num: Dict[str, Dict[str, Any]] = {}
-    db_by_num: Dict[str, Dict[str, Any]] = {}
     for d in db_active_all:
         if len(d["id_nfe"]) == 44:
             db_by_key[d["id_nfe"]] = d
         if d["nf_numero"]:
             db_by_mod_num[f"{d['nf_modelo']}|{d['nf_numero']}"] = d
-            db_by_num.setdefault(d["nf_numero"], d)
+
+    # Só documentos válidos e autorizados entram na conferência de existência/valor.
+    # Canceladas e inutilizadas têm aba própria.
+    def _is_auth(rec: Dict[str, Any]) -> bool:
+        return str(rec.get("status") or "AUTORIZADO").upper() == "AUTORIZADO"
 
     xml_valid_period = [x for x in xml_in_period if x.get("recordKind") == "DOCUMENTO_FISCAL"]
     xml_by_key: Dict[str, Dict[str, Any]] = {}
     xml_by_mod_num: Dict[str, Dict[str, Any]] = {}
-    xml_by_num: Dict[str, Dict[str, Any]] = {}
     for x in xml_valid_period:
         k = re.sub(r"\D", "", str(x.get("accessKey") or ""))
         n = _norm_num(x.get("number"))
@@ -733,238 +735,200 @@ def build_audit_dashboard_report(
             xml_by_key[k] = x
         if n:
             xml_by_mod_num[f"{m}|{n}"] = x
-            xml_by_num.setdefault(n, x)
 
     pdf_by_key: Dict[str, Dict[str, Any]] = {}
-    pdf_by_num: Dict[str, Dict[str, Any]] = {}
-    for p in pdf_in_period:
-        k = re.sub(r"\D", "", str(p.get("accessKey") or ""))
-        n = _norm_num(p.get("number"))
+    pdf_by_mod_num: Dict[str, Dict[str, Any]] = {}
+    for pr in pdf_in_period:
+        k = re.sub(r"\D", "", str(pr.get("accessKey") or ""))
+        n = _norm_num(pr.get("number"))
+        m = _norm_model(pr.get("model"), k)
         if len(k) == 44:
-            pdf_by_key[k] = p
+            pdf_by_key[k] = pr
         if n:
-            pdf_by_num.setdefault(n, p)
+            pdf_by_mod_num[f"{m}|{n}"] = pr
+
+    def _find(idx_key: Dict[str, Any], idx_mn: Dict[str, Any], key: str, mod: str, num: str):
+        if len(key) == 44 and key in idx_key:
+            return idx_key[key]
+        if num:
+            return idx_mn.get(f"{mod}|{num}")
+        return None
+
+    # Índices de todas as notas (sem filtro de período) para dizer "cai fora do período" em vez de "falta"
+    def _index(recs, key_fn, mod_fn, num_fn):
+        by_key: Dict[str, Any] = {}
+        by_mn: Dict[str, Any] = {}
+        for rec in recs:
+            k_, m_, n_ = key_fn(rec), mod_fn(rec), num_fn(rec)
+            if len(k_) == 44:
+                by_key[k_] = rec
+            if n_:
+                by_mn[f"{m_}|{n_}"] = rec
+        return by_key, by_mn
+
+    def _key_of(rec):
+        return re.sub(r"\D", "", str(rec.get("accessKey") or ""))
+
+    db_all_by_key, db_all_by_mod_num = _index(norm_db_docs, lambda d: d["id_nfe"], lambda d: d["nf_modelo"], lambda d: d["nf_numero"])
+    xml_all_by_key, xml_all_by_mod_num = _index(
+        valid_xml_docs, _key_of, lambda r: _norm_model(r.get("model"), _key_of(r)), lambda r: _norm_num(r.get("number")))
+    pdf_all_by_key, pdf_all_by_mod_num = _index(
+        pdf_records, _key_of, lambda r: _norm_model(r.get("model"), _key_of(r)), lambda r: _norm_num(r.get("number")))
+
+    # Notas emitidas num dia e autorizadas em outro (para explicar a diferença na linha)
+    d1_by_key = {d["id_nfe"]: d for d in d_plus_1_records if len(d["id_nfe"]) == 44}
+    d1_by_mod_num = {f"{d['nf_modelo']}|{d['nf_numero']}": d for d in d_plus_1_records if d["nf_numero"]}
 
     divergence_matrix: List[Dict[str, Any]] = []
-    seen_matrix_keys = set()
+    seen_ident = set()
+    nomes = {"db": "banco", "xml": "XML", "pdf": "relatório"}
 
-    def _add_matrix_row(
-        nf_numero: str,
-        id_nfe: str,
-        nf_modelo: str,
-        nf_serie: str,
-        dt_emissao: Optional[str],
-        data_hora_sefaz: Optional[str],
-        status_des: str,
-        valor: float,
-        origem_falha: str,
-        codigo_falha: str,
-        valor_banco: Optional[float] = None,
-        valor_xml: Optional[float] = None,
-        valor_pdf: Optional[float] = None,
-    ):
-        dedup = f"{codigo_falha}|{id_nfe or nf_numero}|{nf_modelo}"
-        if dedup in seen_matrix_keys:
+    def _brl(v: Optional[float]) -> str:
+        return _fmt_brl_txt(v) if v is not None else "—"
+
+    def _check_note(key: str, mod: str, num: str, serie: str, b, x, pr, base: Dict[str, Any]) -> None:
+        """Confere uma nota nas fontes carregadas e registra o que estiver faltando ou diferente."""
+        ident = key if len(key) == 44 else f"{mod}|{num}"
+        if ident in seen_ident:
             return
-        seen_matrix_keys.add(dedup)
-        divergence_matrix.append(
-            {
-                "nf_numero": nf_numero or "—",
-                "id_nfe": id_nfe if len(str(id_nfe or "")) == 44 else (id_nfe or "Não informada (44 dígitos ausente)"),
-                "nf_modelo": nf_modelo or "55",
-                "nf_serie": nf_serie or "1",
-                "dt_emissao": dt_emissao or "—",
-                "data_hora_sefaz": data_hora_sefaz or "—",
-                "status_des": status_des or "Autorizado o uso da NF-e",
-                "valor": round(float(valor or 0.0), 2),
-                "origem_falha": origem_falha,
-                "codigo_falha": codigo_falha,
-                "valor_banco": round(float(valor_banco), 2) if valor_banco is not None else None,
-                "valor_xml": round(float(valor_xml), 2) if valor_xml is not None else None,
-                "valor_pdf": round(float(valor_pdf), 2) if valor_pdf is not None else None,
-            }
-        )
+        seen_ident.add(ident)
 
-    # Regra 4.1: Consta no Relatório (PDF) mas NÃO consta no XML
-    if has_pdf and has_xml:
-        for p in pdf_in_period:
-            k_p = re.sub(r"\D", "", str(p.get("accessKey") or ""))
-            n_p = _norm_num(p.get("number"))
-            x_match = (xml_by_key.get(k_p) if len(k_p) == 44 else None) or (xml_by_num.get(n_p) if n_p else None)
-            if not x_match:
-                b_match = (db_by_key.get(k_p) if len(k_p) == 44 else None) or (db_by_num.get(n_p) if n_p else None)
-                _add_matrix_row(
-                    nf_numero=n_p or str(p.get("number") or "—"),
-                    id_nfe=k_p or (b_match["id_nfe"] if b_match else ""),
-                    nf_modelo=_norm_model(p.get("model") or (b_match["nf_modelo"] if b_match else "55"), k_p),
-                    nf_serie=_norm_series(p.get("series") or (b_match["nf_serie"] if b_match else "1")),
-                    dt_emissao=p.get("issueDate") or (b_match["dt_emissao"] if b_match else None),
-                    data_hora_sefaz=p.get("authDate") or (b_match["data_hora_sefaz"] if b_match else None),
-                    status_des=(b_match["status_des"] if b_match else str(p.get("status") or "AUTORIZADO NO PDF")),
-                    valor=float(p.get("totalValue") or 0.0),
-                    origem_falha="Está no relatório PDF, mas não tem XML",
-                    codigo_falha="RELATORIO_SEM_XML",
-                    valor_banco=b_match["valor"] if b_match else None,
-                    valor_xml=None,
-                    valor_pdf=float(p.get("totalValue") or 0.0),
-                )
+        present = {"db": b is not None, "xml": x is not None, "pdf": pr is not None}
+        loaded = {"db": has_db, "xml": has_xml, "pdf": has_pdf}
+        missing = [s_ for s_ in ("db", "xml", "pdf") if loaded[s_] and not present[s_]]
+        found = [s_ for s_ in ("db", "xml", "pdf") if present[s_]]
 
-    # Regra 4.2: Consta no XML mas NÃO consta no Relatório / Banco
+        d1 = d1_by_key.get(key) if len(key) == 44 else None
+        d1 = d1 or d1_by_mod_num.get(f"{mod}|{num}")
+        d1_txt = (f"  •  emitida {_fmt_br_date(d1['dt_emissao'])} e autorizada {_fmt_br_date(d1['dt_autorizacao'])}"
+                  if d1 else "")
+
+        v_db = b["valor"] if b else None
+        v_xml = round(float(x.get("totalValue") or 0.0), 2) if x else None
+        v_pdf = round(float(pr.get("totalValue") or 0.0), 2) if pr else None
+
+        def _row(origem: str, codigos: List[str]) -> None:
+            divergence_matrix.append({
+                "nf_numero": num or "—",
+                "id_nfe": key if len(key) == 44 else (base.get("id_nfe") or "(sem chave de acesso)"),
+                "nf_modelo": mod or "55",
+                "nf_serie": serie or "1",
+                "dt_emissao": base.get("dt_emissao") or "—",
+                "data_hora_sefaz": base.get("data_hora_sefaz") or "—",
+                "status_des": base.get("status_des") or "Autorizado o uso da NF-e",
+                "valor": round(float(base.get("valor") or 0.0), 2),
+                "origem_falha": origem + d1_txt,
+                "codigo_falha": codigos[0],
+                "codigos": codigos,
+                "d_mais_1": bool(d1),
+                "valor_banco": v_db,
+                "valor_xml": v_xml,
+                "valor_pdf": v_pdf,
+            })
+
+        if missing and found:
+            # Separa o que realmente não existe do que existe, mas cai fora do período pela data escolhida
+            out_idx = {"db": (db_all_by_key, db_all_by_mod_num), "xml": (xml_all_by_key, xml_all_by_mod_num),
+                       "pdf": (pdf_all_by_key, pdf_all_by_mod_num)}
+            fora = [m_ for m_ in missing if _find(out_idx[m_][0], out_idx[m_][1], key, mod, num) is not None]
+            falta = [m_ for m_ in missing if m_ not in fora]
+            partes = []
+            if falta:
+                partes.append("Falta no " + " e no ".join(nomes[m_] for m_ in falta))
+            if fora:
+                partes.append("No " + " e no ".join(nomes[m_] for m_ in fora) + " cai fora do período")
+            texto = "; ".join(partes) + " — está no " + " e no ".join(nomes[f_] for f_ in found)
+            codigos = ["FALTA_" + {"db": "BANCO", "xml": "XML", "pdf": "RELATORIO"}[m_] for m_ in falta]
+            if fora:
+                codigos.append("FORA_DO_PERIODO")
+            _row(texto, codigos)
+
+        valores = {k_: v_ for k_, v_ in (("db", v_db), ("xml", v_xml), ("pdf", v_pdf)) if v_ is not None}
+        if len(valores) >= 2 and max(valores.values()) - min(valores.values()) >= 0.01:
+            texto = "Valor diferente: " + "  •  ".join(f"{nomes[k_]} {_brl(v_)}" for k_, v_ in valores.items())
+            _row(texto, ["DIVERGENCIA_VALOR"])
+
+    # 1) Notas do banco (autorizadas no período)
+    for d in db_active_all:
+        if d["status"] != "AUTORIZADO":
+            continue
+        k_d, n_d, m_d = d["id_nfe"], d["nf_numero"], d["nf_modelo"]
+        x = _find(xml_by_key, xml_by_mod_num, k_d, m_d, n_d)
+        pr = _find(pdf_by_key, pdf_by_mod_num, k_d, m_d, n_d)
+        _check_note(k_d, m_d, n_d, d["nf_serie"], d, x, pr, d)
+
+        # Nota autorizada no banco sem chave de acesso válida
+        if len(k_d) != 44:
+            divergence_matrix.append({
+                "nf_numero": n_d or "—", "id_nfe": k_d or "(sem chave de acesso)", "nf_modelo": m_d,
+                "nf_serie": d["nf_serie"], "dt_emissao": d["dt_emissao"] or "—",
+                "data_hora_sefaz": d["data_hora_sefaz"] or "—", "status_des": d["status_des"],
+                "valor": d["valor"], "origem_falha": "Nota no banco sem chave de acesso válida (não transmitida?)",
+                "codigo_falha": "CHAVE_INVALIDA_OU_AUSENTE", "codigos": ["CHAVE_INVALIDA_OU_AUSENTE"],
+                "d_mais_1": False, "valor_banco": d["valor"], "valor_xml": None, "valor_pdf": None,
+            })
+
+    # 2) XMLs que não casaram com o banco
     for x in xml_valid_period:
+        if not _is_auth(x):
+            continue
         k_x = re.sub(r"\D", "", str(x.get("accessKey") or ""))
         n_x = _norm_num(x.get("number"))
         m_x = _norm_model(x.get("model"), k_x)
-        s_x = _norm_series(x.get("series"))
-        v_x = float(x.get("totalValue") or 0.0)
+        b = _find(db_by_key, db_by_mod_num, k_x, m_x, n_x)
+        if b is not None:
+            continue  # já conferido no passo 1
+        pr = _find(pdf_by_key, pdf_by_mod_num, k_x, m_x, n_x)
+        _check_note(k_x, m_x, n_x, _norm_series(x.get("series")), None, x, pr, {
+            "dt_emissao": x.get("issueDate"),
+            "data_hora_sefaz": x.get("authTimestamp") or x.get("authDate") or x.get("issueDate"),
+            "status_des": x.get("statusDescription") or "",
+            "valor": x.get("totalValue"),
+        })
 
-        b_match = (db_by_key.get(k_x) if len(k_x) == 44 else None) or db_by_mod_num.get(f"{m_x}|{n_x}") or (db_by_num.get(n_x) if n_x else None)
-        p_match = (pdf_by_key.get(k_x) if len(k_x) == 44 else None) or (pdf_by_num.get(n_x) if n_x else None)
+    # 3) Linhas do relatório que não casaram com banco nem XML
+    for pr in pdf_in_period:
+        if not _is_auth(pr):
+            continue
+        k_p = re.sub(r"\D", "", str(pr.get("accessKey") or ""))
+        n_p = _norm_num(pr.get("number"))
+        m_p = _norm_model(pr.get("model"), k_p)
+        if _find(db_by_key, db_by_mod_num, k_p, m_p, n_p) is not None:
+            continue
+        x = _find(xml_by_key, xml_by_mod_num, k_p, m_p, n_p)
+        if x is not None and _is_auth(x):
+            continue  # já conferido no passo 2
+        _check_note(k_p, m_p, n_p, _norm_series(pr.get("series")), None, None, pr, {
+            "dt_emissao": pr.get("issueDate"),
+            "data_hora_sefaz": pr.get("authDate") or pr.get("issueDate"),
+            "status_des": "Consta no relatório PDF",
+            "valor": pr.get("totalValue"),
+        })
 
-        missing_db = has_db and (b_match is None)
-        missing_pdf = has_pdf and (p_match is None)
+    divergence_matrix.sort(key=lambda r: (str(r["dt_emissao"]), str(r["nf_modelo"]), str(r["nf_numero"]).zfill(9)))
 
-        if missing_db and missing_pdf:
-            origem = "Consta no XML mas NÃO consta no Relatório / Banco"
-            cod = "XML_SEM_RELATORIO_E_BANCO"
-        elif missing_db:
-            origem = "Tem XML, mas não está no banco do Clipp"
-            cod = "XML_SEM_BANCO"
-        elif missing_pdf:
-            origem = "Consta no XML mas NÃO consta no Relatório PDF"
-            cod = "XML_SEM_RELATORIO"
-        else:
-            origem = ""
-            cod = ""
+    # Notas autorizadas em outro dia que NÃO batem na comparação (faltam em alguma fonte ou valor diferente)
+    d1_problems: List[Dict[str, Any]] = []
+    d1_seen = set()
+    for r in divergence_matrix:
+        if r["d_mais_1"]:
+            ident = r["id_nfe"] if len(str(r["id_nfe"])) == 44 else f"{r['nf_modelo']}|{r['nf_numero']}"
+            if ident not in d1_seen:
+                d1_seen.add(ident)
+                d1_problems.append(r)
 
-        if origem:
-            _add_matrix_row(
-                nf_numero=n_x,
-                id_nfe=k_x,
-                nf_modelo=m_x,
-                nf_serie=s_x,
-                dt_emissao=x.get("issueDate"),
-                data_hora_sefaz=x.get("authTimestamp") or x.get("authDate") or x.get("issueDate"),
-                status_des=x.get("statusDescription") or str(x.get("status") or ""),
-                valor=v_x,
-                origem_falha=origem,
-                codigo_falha=cod,
-                valor_banco=b_match["valor"] if b_match else None,
-                valor_xml=v_x,
-                valor_pdf=float(p_match.get("totalValue") or 0.0) if p_match else None,
-            )
+    def _count(code: str) -> int:
+        return sum(1 for r in divergence_matrix if code in r["codigos"])
 
-        # Verifica divergência de valor ou status entre XML e Banco/PDF
-        if b_match and abs(v_x - b_match["valor"]) >= 0.01:
-            _add_matrix_row(
-                nf_numero=n_x,
-                id_nfe=k_x or b_match["id_nfe"],
-                nf_modelo=m_x,
-                nf_serie=s_x,
-                dt_emissao=x.get("issueDate") or b_match["dt_emissao"],
-                data_hora_sefaz=x.get("authTimestamp") or b_match["data_hora_sefaz"],
-                status_des=b_match["status_des"] or x.get("statusDescription") or "",
-                valor=v_x,
-                origem_falha=f"Valor diferente: XML {_fmt_brl_txt(v_x)} × banco {_fmt_brl_txt(b_match['valor'])}",
-                codigo_falha="DIVERGENCIA_VALOR",
-                valor_banco=b_match["valor"],
-                valor_xml=v_x,
-                valor_pdf=float(p_match.get("totalValue") or 0.0) if p_match else None,
-            )
-        if p_match and abs(v_x - float(p_match.get("totalValue") or 0.0)) >= 0.01:
-            vp = float(p_match.get("totalValue") or 0.0)
-            _add_matrix_row(
-                nf_numero=n_x,
-                id_nfe=k_x,
-                nf_modelo=m_x,
-                nf_serie=s_x,
-                dt_emissao=x.get("issueDate"),
-                data_hora_sefaz=x.get("authTimestamp") or x.get("authDate"),
-                status_des=x.get("statusDescription") or "",
-                valor=v_x,
-                origem_falha=f"Valor diferente: XML {_fmt_brl_txt(v_x)} × relatório {_fmt_brl_txt(vp)}",
-                codigo_falha="DIVERGENCIA_VALOR",
-                valor_banco=b_match["valor"] if b_match else None,
-                valor_xml=v_x,
-                valor_pdf=vp,
-            )
-
-    # Regra 4.3: Consta no Banco mas não possui XML correspondente (+ Desafio Temporal D+1 e Falta de Chave)
-    for d in db_active_all:
-        k_d = d["id_nfe"]
-        n_d = d["nf_numero"]
-        m_d = d["nf_modelo"]
-        x_match = (xml_by_key.get(k_d) if len(k_d) == 44 else None) or xml_by_mod_num.get(f"{m_d}|{n_d}") or (xml_by_num.get(n_d) if n_d else None)
-        p_match = (pdf_by_key.get(k_d) if len(k_d) == 44 else None) or (pdf_by_num.get(n_d) if n_d else None)
-
-        if has_xml and not x_match and d["status"] == "AUTORIZADO":
-            _add_matrix_row(
-                nf_numero=n_d,
-                id_nfe=k_d,
-                nf_modelo=m_d,
-                nf_serie=d["nf_serie"],
-                dt_emissao=d["dt_emissao"],
-                data_hora_sefaz=d["data_hora_sefaz"],
-                status_des=d["status_des"],
-                valor=d["valor"],
-                origem_falha="Está no banco do Clipp, mas não tem XML",
-                codigo_falha="BANCO_SEM_XML",
-                valor_banco=d["valor"],
-                valor_xml=None,
-                valor_pdf=float(p_match.get("totalValue") or 0.0) if p_match else None,
-            )
-
-        # Auditoria de Chaves: Nota autorizada no banco sem chave 44 dígitos válida em tb_nfe
-        if d["status"] == "AUTORIZADO" and len(k_d) != 44:
-            _add_matrix_row(
-                nf_numero=n_d,
-                id_nfe=k_d or "(sem chave de acesso)",
-                nf_modelo=m_d,
-                nf_serie=d["nf_serie"],
-                dt_emissao=d["dt_emissao"],
-                data_hora_sefaz=d["data_hora_sefaz"],
-                status_des=d["status_des"],
-                valor=d["valor"],
-                origem_falha="Nota no banco sem chave de acesso válida (não transmitida?)",
-                codigo_falha="CHAVE_INVALIDA_OU_AUSENTE",
-                valor_banco=d["valor"],
-                valor_xml=float(x_match.get("totalValue") or 0.0) if x_match else None,
-                valor_pdf=float(p_match.get("totalValue") or 0.0) if p_match else None,
-            )
-
-    # Desafio Temporal (D+1): Emissões que transmitem/autorizam em datas distintas
-    for d in d_plus_1_records:
-        k_d = d["id_nfe"]
-        n_d = d["nf_numero"]
-        m_d = d["nf_modelo"]
-        x_match = (xml_by_key.get(k_d) if len(k_d) == 44 else None) or xml_by_mod_num.get(f"{m_d}|{n_d}")
-        p_match = (pdf_by_key.get(k_d) if len(k_d) == 44 else None) or (pdf_by_num.get(n_d) if n_d else None)
-        _add_matrix_row(
-            nf_numero=n_d,
-            id_nfe=k_d,
-            nf_modelo=m_d,
-            nf_serie=d["nf_serie"],
-            dt_emissao=d["dt_emissao"],
-            data_hora_sefaz=d["data_hora_sefaz"],
-            status_des=d["status_des"],
-            valor=d["valor"],
-            origem_falha=f"Emitida em {_fmt_br_date(d['dt_emissao'])} e autorizada em {_fmt_br_date(d['dt_autorizacao'])}",
-            codigo_falha="DIVERGENCIA_D_MAIS_1",
-            valor_banco=d["valor"],
-            valor_xml=float(x_match.get("totalValue") or 0.0) if x_match else None,
-            valor_pdf=float(p_match.get("totalValue") or 0.0) if p_match else None,
-        )
-
-    # Contadores da Matriz de Divergências por tipo de falha
     matrix_counts = {
         "total": len(divergence_matrix),
-        "RELATORIO_SEM_XML": sum(1 for r in divergence_matrix if r["codigo_falha"] == "RELATORIO_SEM_XML"),
-        "XML_SEM_RELATORIO_OU_BANCO": sum(
-            1 for r in divergence_matrix if r["codigo_falha"] in ("XML_SEM_RELATORIO_E_BANCO", "XML_SEM_BANCO", "XML_SEM_RELATORIO")
-        ),
-        "BANCO_SEM_XML": sum(1 for r in divergence_matrix if r["codigo_falha"] == "BANCO_SEM_XML"),
-        "DIVERGENCIA_D_MAIS_1": sum(1 for r in divergence_matrix if r["codigo_falha"] == "DIVERGENCIA_D_MAIS_1"),
-        "DIVERGENCIA_VALOR": sum(1 for r in divergence_matrix if r["codigo_falha"] == "DIVERGENCIA_VALOR"),
-        "CHAVE_INVALIDA_OU_AUSENTE": sum(1 for r in divergence_matrix if r["codigo_falha"] == "CHAVE_INVALIDA_OU_AUSENTE"),
+        "FALTA_BANCO": _count("FALTA_BANCO"),
+        "FALTA_XML": _count("FALTA_XML"),
+        "FALTA_RELATORIO": _count("FALTA_RELATORIO"),
+        "DIVERGENCIA_VALOR": _count("DIVERGENCIA_VALOR"),
+        "FORA_DO_PERIODO": _count("FORA_DO_PERIODO"),
+        "CHAVE_INVALIDA_OU_AUSENTE": _count("CHAVE_INVALIDA_OU_AUSENTE"),
+        "DIVERGENCIA_D_MAIS_1": len(d1_problems),
     }
 
     return {
@@ -1007,6 +971,7 @@ def build_audit_dashboard_report(
         "divergenceMatrix": divergence_matrix,
         "divergenceCounts": matrix_counts,
         "dPlus1Records": d_plus_1_records,
+        "dPlus1Problems": d1_problems,
     }
 
 
