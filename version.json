@@ -1,14 +1,15 @@
 {
   "appName": "ConfereFiscal",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "channel": "stable",
   "releaseDate": "2026-11-08",
   "repository": "junin1737/conferefiscal",
   "repositoryUrl": "https://github.com/junin1737/conferefiscal",
   "branch": "main",
   "installerAssetName": "Instalador_ConfereFiscal_Setup.exe",
-  "portableAssetName": "ConfereFiscal_Portatil_v1.2.4.zip",
+  "portableAssetName": "ConfereFiscal_Portatil_v1.2.5.zip",
   "changelog": [
+    "v1.2.5 - Filtro 'Autorizada em outro dia' lista todas as notas",
     "v1.2.4 - Corrige notas que apareciam sem chave de acesso",
     "v1.2.3 - Copiar chaves, exportar tela atual e filtro de notas sem XML",
     "v1.2.2 - Diferenças mostram só notas com problema",
@@ -23,6 +24,11 @@
     "v1.0.0 - Lançamento inicial do Dashboard Executivo de Conciliação e Auditoria Fiscal (NF-e 55 / NFC-e 65 / Firebird / XML / PDF)"
   ],
   "history": [
+    {
+      "version": "1.2.5",
+      "date": "2026-11-08",
+      "summary": "Filtro 'Autorizada em outro dia' lista todas as notas"
+    },
     {
       "version": "1.2.4",
       "date": "2026-11-08",
