@@ -2043,12 +2043,13 @@ class ConfereFiscalDesktopApp:
             )
         )
 
+        if f_code == "DIVERGENCIA_D_MAIS_1":
+            self._populate_matrix_with_d1(q_search)
+            return
+
         for idx, r in enumerate(rows):
             codigos = r.get("codigos") or [r.get("codigo_falha", "")]
-            if f_code == "DIVERGENCIA_D_MAIS_1":
-                if not r.get("d_mais_1"):
-                    continue
-            elif f_code != "ALL" and f_code not in codigos:
+            if f_code != "ALL" and f_code not in codigos:
                 continue
             if q_search:
                 hay = f"{r.get('nf_numero', '')} {r.get('id_nfe', '')} {r.get('origem_falha', '')}".lower()
@@ -2070,6 +2071,48 @@ class ConfereFiscalDesktopApp:
                 ),
                 tags=(tag,),
             )
+
+    def _populate_matrix_with_d1(self, q_search: str) -> None:
+        """Filtro 'Autorizada em outro dia': lista TODAS as notas emitidas num dia e autorizadas em outro,
+        mostrando a relação emissão × autorização e o que falta (XML / relatório) em cada uma."""
+        todas = list((self.audit_dashboard or {}).get("dPlus1Records") or [])
+        tem_xml_carregado = bool(self.xml_documents)
+        tem_pdf_carregado = bool(self.pdf_records)
+        todas.sort(key=lambda d: (str(d.get("dt_emissao") or ""), str(d.get("nf_modelo")), str(d.get("nf_numero")).zfill(9)))
+        com_problema = 0
+        for idx, d in enumerate(todas):
+            faltas = []
+            if tem_xml_carregado and not d.get("tem_xml"):
+                faltas.append("falta o XML")
+            if tem_pdf_carregado and not d.get("no_relatorio"):
+                faltas.append("não está no relatório")
+            texto = f"Emitida em {_fmt_date_br(d.get('dt_emissao'))} e autorizada em {_fmt_date_br(d.get('dt_autorizacao'))}"
+            if faltas:
+                texto += "  •  " + " e ".join(faltas)
+            elif d.get("problema"):
+                texto += "  •  " + d["problema"]
+            problema = bool(faltas or d.get("problema"))
+            com_problema += 1 if problema else 0
+            if q_search and q_search not in f"{d.get('nf_numero', '')} {d.get('id_nfe', '')} {texto}".lower():
+                continue
+            self.tree_matrix.insert(
+                "",
+                "end",
+                values=(
+                    texto,
+                    d.get("nf_numero", "—"),
+                    d.get("nf_modelo", "—"),
+                    _fmt_brl(d.get("valor")),
+                    _fmt_date_br(d.get("dt_emissao")),
+                    _fmt_datetime_br(d.get("data_hora_sefaz")),
+                    d.get("id_nfe") or "(sem chave de acesso)",
+                ),
+                tags=("err" if problema else ("even" if idx % 2 == 0 else "odd"),),
+            )
+        resumo = f"Autorizadas em outro dia: {len(todas)}"
+        if tem_xml_carregado or tem_pdf_carregado:
+            resumo += f"   •   com falta ou diferença: {com_problema} (em vermelho)"
+        self.lbl_matrix_summary.config(text=resumo)
 
     # -------------------------------------------------------------------------
     # CONSOLE SQL E EXPORTAÇÃO (.XLSX / .PDF)
