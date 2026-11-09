@@ -388,8 +388,8 @@ def extract_clipp_fdb_sales(
                 return b""
             next_pg = struct.unpack_from("<i", data, p_base + s_off + 16)[0]
             next_sl = struct.unpack_from("<H", data, p_base + s_off + 20)[0]
-            return data[p_base + s_off + 22 : p_base + s_off + s_len] + _get_slot_payload(next_pg, next_sl, depth + 1)
-        return data[p_base + s_off + 13 : p_base + s_off + s_len]
+            return fb_rle_decompress(data[p_base + s_off + 22 : p_base + s_off + s_len]) + _get_slot_payload(next_pg, next_sl, depth + 1)
+        return fb_rle_decompress(data[p_base + s_off + 13 : p_base + s_off + s_len])
 
     for base in range(0, total_len - page_size + 1, page_size):
         if data[base] != 5:
@@ -411,11 +411,11 @@ def extract_clipp_fdb_sales(
                     continue
                 frag_page = struct.unpack_from("<i", data, base + off + 16)[0]
                 frag_slot = struct.unpack_from("<H", data, base + off + 20)[0]
-                raw_rle = data[base + off + 22 : base + off + length] + _get_slot_payload(frag_page, frag_slot)
+                # Registro dividido em partes: cada parte é compactada separadamente (o começo pode
+                # terminar com byte de enchimento 0x00), então descompactamos uma a uma e juntamos.
+                r = fb_rle_decompress(data[base + off + 22 : base + off + length]) + _get_slot_payload(frag_page, frag_slot)
             else:
-                raw_rle = data[base + off + 13 : base + off + length]
-
-            r = fb_rle_decompress(raw_rle)
+                r = fb_rle_decompress(data[base + off + 13 : base + off + length])
 
             if dpg_rel == 222 and len(r) >= 150:
                 id_nfv = struct.unpack_from("<i", r, 64)[0]
