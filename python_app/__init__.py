@@ -5,4 +5,4 @@ importar XMLs (.zip, .rar, .xml) e relatórios PDF, consultar/manipular a base l
 e executar a conciliação fiscal completa.
 """
 
-__version__ = "1.2.3"
+__version__ = "1.2.4"
